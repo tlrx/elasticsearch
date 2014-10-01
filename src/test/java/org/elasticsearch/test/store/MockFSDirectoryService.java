@@ -31,6 +31,7 @@ import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.io.stream.BytesStreamOutput;
 import org.elasticsearch.common.lucene.Lucene;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.index.engine.Engine;
 import org.elasticsearch.index.settings.IndexSettings;
 import org.elasticsearch.index.shard.IndexShardException;
 import org.elasticsearch.index.shard.ShardId;
@@ -66,6 +67,14 @@ public class MockFSDirectoryService extends FsDirectoryService {
         delegateService = helper.randomDirectorService(indexStore);
         if (checkIndexOnClose) {
             final IndicesLifecycle.Listener listener = new IndicesLifecycle.Listener() {
+
+                @Override
+                public void beforeIndexShardClosed(ShardId sid, @Nullable IndexShard indexShard) {
+                    if (shardId.equals(sid) && indexShard != null) {
+                        indexShard.flush(new Engine.Flush().force(true));
+                    }
+                }
+
                 @Override
                 public void afterIndexShardClosed(ShardId sid, @Nullable IndexShard indexShard) {
                     if (shardId.equals(sid) && indexShard != null) {
