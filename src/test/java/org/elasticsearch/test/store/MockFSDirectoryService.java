@@ -71,7 +71,11 @@ public class MockFSDirectoryService extends FsDirectoryService {
                 @Override
                 public void beforeIndexShardClosed(ShardId sid, @Nullable IndexShard indexShard) {
                     if (shardId.equals(sid) && indexShard != null) {
-                        indexShard.flush(new Engine.Flush().force(true));
+                        indexShard.flush(
+                                new Engine.Flush()
+                                        .type(Engine.Flush.Type.COMMIT) // Keep translog for tests that rely on replaying translog
+                                        .waitIfOngoing(true)
+                        );
                     }
                 }
 
