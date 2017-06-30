@@ -29,30 +29,26 @@ import org.elasticsearch.common.io.stream.Writeable;
 import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentParser;
-import org.elasticsearch.common.xcontent.support.XContentMapValues;
 import org.elasticsearch.rest.RestRequest;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Map;
-import java.util.function.Function;
 
 /**
  * Context used to fetch the {@code _source}.
  */
 public class FetchSourceContext implements Writeable, ToXContent {
 
-    public static final ParseField INCLUDES_FIELD = new ParseField("includes", "include");
-    public static final ParseField EXCLUDES_FIELD = new ParseField("excludes", "exclude");
+    private static final ParseField INCLUDES_FIELD = new ParseField("includes", "include");
+    private static final ParseField EXCLUDES_FIELD = new ParseField("excludes", "exclude");
 
     public static final FetchSourceContext FETCH_SOURCE = new FetchSourceContext(true);
     public static final FetchSourceContext DO_NOT_FETCH_SOURCE = new FetchSourceContext(false);
     private final boolean fetchSource;
     private final String[] includes;
     private final String[] excludes;
-    private Function<Map<String, ?>, Map<String, Object>> filter;
 
     public FetchSourceContext(boolean fetchSource, String[] includes, String[] excludes) {
         this.fetchSource = fetchSource;
@@ -87,6 +83,10 @@ public class FetchSourceContext implements Writeable, ToXContent {
 
     public String[] excludes() {
         return this.excludes;
+    }
+
+    public boolean isFiltered() {
+        return (includes != null && includes.length >0) || (excludes != null && excludes.length >0);
     }
 
     public static FetchSourceContext parseFromRestRequest(RestRequest request) {
@@ -223,16 +223,5 @@ public class FetchSourceContext implements Writeable, ToXContent {
         result = 31 * result + (includes != null ? Arrays.hashCode(includes) : 0);
         result = 31 * result + (excludes != null ? Arrays.hashCode(excludes) : 0);
         return result;
-    }
-
-    /**
-     * Returns a filter function that expects the source map as an input and returns
-     * the filtered map.
-     */
-    public Function<Map<String, ?>, Map<String, Object>> getFilter() {
-        if (filter == null) {
-            filter = XContentMapValues.filter(includes, excludes);
-        }
-        return filter;
     }
 }

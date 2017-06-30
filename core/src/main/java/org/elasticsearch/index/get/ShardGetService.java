@@ -23,16 +23,12 @@ import org.apache.lucene.index.Term;
 import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.bytes.BytesReference;
-import org.elasticsearch.common.collect.Tuple;
 import org.elasticsearch.common.document.DocumentField;
 import org.elasticsearch.common.lucene.uid.VersionsAndSeqNoResolver.DocIdAndVersion;
 import org.elasticsearch.common.metrics.CounterMetric;
 import org.elasticsearch.common.metrics.MeanMetric;
 import org.elasticsearch.common.util.set.Sets;
-import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.common.xcontent.XContentHelper;
-import org.elasticsearch.common.xcontent.XContentType;
-import org.elasticsearch.common.xcontent.support.XContentMapValues;
 import org.elasticsearch.index.IndexSettings;
 import org.elasticsearch.index.VersionType;
 import org.elasticsearch.index.engine.Engine;
@@ -218,16 +214,9 @@ public final class ShardGetService extends AbstractIndexShardComponent {
 
         if (!fetchSourceContext.fetchSource()) {
             source = null;
-        } else if (fetchSourceContext.includes().length > 0 || fetchSourceContext.excludes().length > 0) {
-            Map<String, Object> sourceAsMap;
-            XContentType sourceContentType = null;
-            // TODO: The source might parsed and available in the sourceLookup but that one uses unordered maps so different. Do we care?
-            Tuple<XContentType, Map<String, Object>> typeMapTuple = XContentHelper.convertToMap(source, true);
-            sourceContentType = typeMapTuple.v1();
-            sourceAsMap = typeMapTuple.v2();
-            sourceAsMap = XContentMapValues.filter(sourceAsMap, fetchSourceContext.includes(), fetchSourceContext.excludes());
+        } else if (fetchSourceContext.isFiltered()) {
             try {
-                source = XContentFactory.contentBuilder(sourceContentType).map(sourceAsMap).bytes();
+                source = XContentHelper.filter(source, null, fetchSourceContext.includes(), fetchSourceContext.excludes());
             } catch (IOException e) {
                 throw new ElasticsearchException("Failed to get type [" + type + "] and id [" + id + "] with includes/excludes set", e);
             }

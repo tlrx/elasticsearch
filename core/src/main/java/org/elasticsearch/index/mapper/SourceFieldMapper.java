@@ -27,15 +27,10 @@ import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.Version;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.bytes.BytesReference;
-import org.elasticsearch.common.collect.Tuple;
-import org.elasticsearch.common.io.stream.BytesStreamOutput;
 import org.elasticsearch.common.lucene.Lucene;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.XContentBuilder;
-import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.common.xcontent.XContentHelper;
-import org.elasticsearch.common.xcontent.XContentType;
-import org.elasticsearch.common.xcontent.support.XContentMapValues;
 import org.elasticsearch.index.query.QueryShardContext;
 import org.elasticsearch.index.query.QueryShardException;
 
@@ -45,14 +40,13 @@ import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Function;
 
 public class SourceFieldMapper extends MetadataFieldMapper {
 
     public static final String NAME = "_source";
 
     public static final String CONTENT_TYPE = "_source";
-    private final Function<Map<String, ?>, Map<String, Object>> filter;
+    private final boolean filtered;
 
     public static class Defaults {
         public static final String NAME = SourceFieldMapper.NAME;
@@ -189,7 +183,7 @@ public class SourceFieldMapper extends MetadataFieldMapper {
         this.includes = includes;
         this.excludes = excludes;
         final boolean filtered = (includes != null && includes.length > 0) || (excludes != null && excludes.length > 0);
-        this.filter = enabled && filtered && fieldType().stored() ? XContentMapValues.filter(includes, excludes) : null;
+        this.filtered = enabled && filtered && fieldType().stored();
         this.complete = enabled && includes == null && excludes == null;
     }
 
@@ -239,17 +233,8 @@ public class SourceFieldMapper extends MetadataFieldMapper {
             return;
         }
 
-        if (filter != null) {
-            // we don't update the context source if we filter, we want to keep it as is...
-            Tuple<XContentType, Map<String, Object>> mapTuple =
-                XContentHelper.convertToMap(source, true, context.sourceToParse().getXContentType());
-            Map<String, Object> filteredSource = filter.apply(mapTuple.v2());
-            BytesStreamOutput bStream = new BytesStreamOutput();
-            XContentType contentType = mapTuple.v1();
-            XContentBuilder builder = XContentFactory.contentBuilder(contentType, bStream).map(filteredSource);
-            builder.close();
-
-            source = bStream.bytes();
+        if (filtered) {
+            source = XContentHelper.filter(source, context.sourceToParse().getXContentType(), includes, excludes);
         }
         BytesRef ref = source.toBytesRef();
         fields.add(new StoredField(fieldType().name(), ref.bytes, ref.offset, ref.length));

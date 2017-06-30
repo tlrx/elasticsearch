@@ -162,7 +162,7 @@ public class XContentMapValues {
      * Returns a function that filters a document map based on the given include and exclude rules.
      * @see #filter(Map, String[], String[]) for details
      */
-    public static Function<Map<String, ?>, Map<String, Object>> filter(String[] includes, String[] excludes) {
+    private static Function<Map<String, ?>, Map<String, Object>> filter(String[] includes, String[] excludes) {
         CharacterRunAutomaton matchAllAutomaton = new CharacterRunAutomaton(Automata.makeAnyString());
 
         CharacterRunAutomaton include;

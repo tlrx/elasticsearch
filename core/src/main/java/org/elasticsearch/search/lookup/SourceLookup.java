@@ -29,6 +29,7 @@ import org.elasticsearch.common.xcontent.support.XContentMapValues;
 import org.elasticsearch.index.fieldvisitor.FieldsVisitor;
 import org.elasticsearch.search.fetch.subphase.FetchSourceContext;
 
+import java.io.IOException;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -128,8 +129,8 @@ public class SourceLookup implements Map {
         return XContentMapValues.extractRawValues(path, loadSourceIfNeeded());
     }
 
-    public Object filter(FetchSourceContext context) {
-        return context.getFilter().apply(loadSourceIfNeeded());
+    public BytesReference filter(FetchSourceContext context) throws IOException {
+        return XContentHelper.filter(sourceAsBytes, sourceContentType, context.includes(), context.excludes());
     }
 
     public Object extractValue(String path) {

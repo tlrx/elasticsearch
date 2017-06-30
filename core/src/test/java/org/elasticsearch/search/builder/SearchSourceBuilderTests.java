@@ -109,6 +109,7 @@ public class SearchSourceBuilderTests extends AbstractSearchTestCase {
                 SearchSourceBuilder searchSourceBuilder = SearchSourceBuilder.fromXContent(createParseContext(parser));
                 assertArrayEquals(new String[]{"*.field2"}, searchSourceBuilder.fetchSource().excludes());
                 assertArrayEquals(new String[]{"include"}, searchSourceBuilder.fetchSource().includes());
+                assertTrue(searchSourceBuilder.fetchSource().isFiltered());
             }
         }
         {
@@ -118,6 +119,7 @@ public class SearchSourceBuilderTests extends AbstractSearchTestCase {
                 assertArrayEquals(new String[]{}, searchSourceBuilder.fetchSource().excludes());
                 assertArrayEquals(new String[]{}, searchSourceBuilder.fetchSource().includes());
                 assertFalse(searchSourceBuilder.fetchSource().fetchSource());
+                assertFalse(searchSourceBuilder.fetchSource().isFiltered());
             }
         }
     }

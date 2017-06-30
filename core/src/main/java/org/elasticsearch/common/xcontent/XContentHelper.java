@@ -25,17 +25,22 @@ import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.collect.Tuple;
 import org.elasticsearch.common.compress.Compressor;
 import org.elasticsearch.common.compress.CompressorFactory;
+import org.elasticsearch.common.io.stream.BytesStreamOutput;
 import org.elasticsearch.common.xcontent.ToXContent.Params;
 
 import java.io.BufferedInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
+import static java.util.Collections.emptySet;
+import static java.util.stream.Collectors.toSet;
 import static org.elasticsearch.common.xcontent.ToXContent.EMPTY_PARAMS;
 
 @SuppressWarnings("unchecked")
@@ -468,6 +473,51 @@ public class XContentHelper {
                 builder.endObject();
             }
             return builder.bytes();
+        }
+    }
+
+    public static BytesReference filter(BytesReference bytes, XContentType xContentType, String[] includes, String[] excludes) throws
+            IOException {
+        if (bytes == null || bytes.length() == 0) {
+            return bytes;
+        }
+
+        InputStream inputStream;
+        Compressor compressor = CompressorFactory.compressor(bytes);
+        if (compressor != null) {
+            inputStream = compressor.streamInput(bytes.streamInput());
+        } else {
+            inputStream = bytes.streamInput();
+        }
+
+        final XContent xContent;
+        if (xContentType != null) {
+            xContent = xContentType.xContent();
+        } else {
+            if (inputStream.markSupported() == false) {
+                inputStream = new BufferedInputStream(inputStream);
+            }
+            @SuppressWarnings("deprecated") // When filtering the source of a document we don't always know the XContentType
+            XContentType bytesContentType = XContentFactory.xContentType(inputStream);
+            if (bytesContentType == null) {
+                throw new IllegalArgumentException("Unable to detect xcontent type of the reference to bytes");
+            }
+            xContent = bytesContentType.xContent();
+        }
+
+        final Set<String> sourceIncludes =  (includes != null) ? Arrays.stream(includes).collect(toSet()) : emptySet();
+        final Set<String> sourceExcludes =  (excludes != null) ? Arrays.stream(excludes).collect(toSet()) : emptySet();
+
+        try (XContentParser parser = xContent.createParser(NamedXContentRegistry.EMPTY, inputStream)) {
+            final int capacity = Math.min(1024, bytes.length());
+            try (XContentBuilder builder = new XContentBuilder(xContent, new BytesStreamOutput(capacity), sourceIncludes, sourceExcludes)) {
+                //We can't use builder.copyCurrentStructure(parser) here because it would filter out the root object.
+                if (parser.currentToken() == null) {
+                    parser.nextToken();
+                }
+                XContentHelper.copyCurrentStructure(builder.generator(), parser);
+                return builder.bytes();
+            }
         }
     }
 }

@@ -30,10 +30,8 @@ import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.collect.Tuple;
 import org.elasticsearch.common.component.AbstractComponent;
 import org.elasticsearch.common.document.DocumentField;
-import org.elasticsearch.common.io.stream.BytesStreamOutput;
 import org.elasticsearch.common.io.stream.Streamable;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentHelper;
 import org.elasticsearch.common.xcontent.XContentType;
 import org.elasticsearch.index.VersionType;
@@ -349,15 +347,9 @@ public class UpdateHelper extends AbstractComponent {
         BytesReference sourceFilteredAsBytes = sourceAsBytes;
         if (request.fetchSource() != null && request.fetchSource().fetchSource()) {
             sourceRequested = true;
-            if (request.fetchSource().includes().length > 0 || request.fetchSource().excludes().length > 0) {
-                Object value = sourceLookup.filter(request.fetchSource());
+            if (request.fetchSource().isFiltered()) {
                 try {
-                    final int initialCapacity = Math.min(1024, sourceAsBytes.length());
-                    BytesStreamOutput streamOutput = new BytesStreamOutput(initialCapacity);
-                    try (XContentBuilder builder = new XContentBuilder(sourceContentType.xContent(), streamOutput)) {
-                        builder.value(value);
-                        sourceFilteredAsBytes = builder.bytes();
-                    }
+                    sourceFilteredAsBytes = sourceLookup.filter(request.fetchSource());
                 } catch (IOException e) {
                     throw new ElasticsearchException("Error filtering source", e);
                 }

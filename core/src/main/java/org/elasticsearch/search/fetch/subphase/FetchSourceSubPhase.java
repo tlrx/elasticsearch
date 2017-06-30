@@ -20,8 +20,6 @@
 package org.elasticsearch.search.fetch.subphase;
 
 import org.elasticsearch.ElasticsearchException;
-import org.elasticsearch.common.io.stream.BytesStreamOutput;
-import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.search.fetch.FetchSubPhase;
 import org.elasticsearch.search.internal.SearchContext;
 import org.elasticsearch.search.lookup.SourceLookup;
@@ -35,29 +33,23 @@ public final class FetchSourceSubPhase implements FetchSubPhase {
         if (context.sourceRequested() == false) {
             return;
         }
-        SourceLookup source = context.lookup().source();
+        SourceLookup sourceLookup = context.lookup().source();
         FetchSourceContext fetchSourceContext = context.fetchSourceContext();
         assert fetchSourceContext.fetchSource();
-        if (fetchSourceContext.includes().length == 0 && fetchSourceContext.excludes().length == 0) {
-            hitContext.hit().sourceRef(source.internalSourceRef());
+        if (fetchSourceContext.isFiltered() == false) {
+            hitContext.hit().sourceRef(sourceLookup.internalSourceRef());
             return;
         }
 
-        if (source.internalSourceRef() == null) {
+        if (sourceLookup.internalSourceRef() == null) {
             throw new IllegalArgumentException("unable to fetch fields from _source field: _source is disabled in the mappings " +
                     "for index [" + context.indexShard().shardId().getIndexName() + "]");
         }
 
-        final Object value = source.filter(fetchSourceContext);
         try {
-            final int initialCapacity = Math.min(1024, source.internalSourceRef().length());
-            BytesStreamOutput streamOutput = new BytesStreamOutput(initialCapacity);
-            XContentBuilder builder = new XContentBuilder(source.sourceContentType().xContent(), streamOutput);
-            builder.value(value);
-            hitContext.hit().sourceRef(builder.bytes());
+            hitContext.hit().sourceRef(sourceLookup.filter(fetchSourceContext));
         } catch (IOException e) {
             throw new ElasticsearchException("Error filtering source", e);
         }
-
     }
 }

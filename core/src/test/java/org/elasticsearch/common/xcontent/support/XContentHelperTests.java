@@ -23,10 +23,10 @@ import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.xcontent.NamedXContentRegistry;
 import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.ToXContentObject;
+import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentHelper;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.common.xcontent.XContentType;
-import org.elasticsearch.test.ESTestCase;
 import org.hamcrest.Matchers;
 
 import java.io.IOException;
@@ -34,8 +34,27 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
-public class XContentHelperTests extends ESTestCase {
+import static org.elasticsearch.common.xcontent.XContentHelper.toXContent;
+
+public class XContentHelperTests extends AbstractFilteringTestCase {
+
+    @Override
+    protected void testFilter(Builder expected, Builder actual, Set<String> includes, Set<String> excludes) throws IOException {
+        final XContentType xContentType = randomFrom(XContentType.values());
+        final boolean humanReadable = randomBoolean();
+
+        ToXContentObject expectedToXContent = (builder, params) -> expected.apply(builder);
+        BytesReference expectedBytes = toXContent(expectedToXContent, xContentType, humanReadable);
+
+        BytesReference actualBytes;
+        try (XContentBuilder builder = XContentBuilder.builder(xContentType.xContent(), includes, excludes)) {
+            actualBytes = actual.apply(builder).bytes();
+        }
+
+        assertArrayEquals(expectedBytes.toBytesRef().bytes, actualBytes.toBytesRef().bytes);
+    }
 
     Map<String, Object> getMap(Object... keyValues) {
         Map<String, Object> map = new HashMap<>();

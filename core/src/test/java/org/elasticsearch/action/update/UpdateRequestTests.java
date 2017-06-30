@@ -301,6 +301,7 @@ public class UpdateRequestTests extends ESTestCase {
         assertThat(request.fetchSource().includes().length, equalTo(0));
         assertThat(request.fetchSource().excludes().length, equalTo(0));
         assertThat(request.fetchSource().fetchSource(), equalTo(true));
+        assertThat(request.fetchSource().isFiltered(), equalTo(false));
 
         request.fromXContent(createParser(XContentFactory.jsonBuilder()
                 .startObject()
@@ -310,6 +311,7 @@ public class UpdateRequestTests extends ESTestCase {
         assertThat(request.fetchSource().includes().length, equalTo(0));
         assertThat(request.fetchSource().excludes().length, equalTo(0));
         assertThat(request.fetchSource().fetchSource(), equalTo(false));
+        assertThat(request.fetchSource().isFiltered(), equalTo(false));
 
         request.fromXContent(createParser(XContentFactory.jsonBuilder()
                 .startObject()
@@ -320,6 +322,7 @@ public class UpdateRequestTests extends ESTestCase {
         assertThat(request.fetchSource().includes().length, equalTo(1));
         assertThat(request.fetchSource().excludes().length, equalTo(0));
         assertThat(request.fetchSource().includes()[0], equalTo("path.inner.*"));
+        assertThat(request.fetchSource().isFiltered(), equalTo(true));
 
         request.fromXContent(createParser(XContentFactory.jsonBuilder()
                 .startObject()
@@ -334,6 +337,7 @@ public class UpdateRequestTests extends ESTestCase {
         assertThat(request.fetchSource().excludes().length, equalTo(1));
         assertThat(request.fetchSource().includes()[0], equalTo("path.inner.*"));
         assertThat(request.fetchSource().excludes()[0], equalTo("another.inner.*"));
+        assertThat(request.fetchSource().isFiltered(), equalTo(true));
     }
 
     public void testNowInScript() throws IOException {
