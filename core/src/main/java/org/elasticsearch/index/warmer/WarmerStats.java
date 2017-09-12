@@ -23,11 +23,11 @@ import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Streamable;
 import org.elasticsearch.common.unit.TimeValue;
-import org.elasticsearch.common.xcontent.ToXContent.Params;
 import org.elasticsearch.common.xcontent.ToXContentFragment;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 
 import java.io.IOException;
+import java.util.concurrent.TimeUnit;
 
 public class WarmerStats implements Streamable, ToXContentFragment {
 
@@ -92,7 +92,7 @@ public class WarmerStats implements Streamable, ToXContentFragment {
         builder.startObject(Fields.WARMER);
         builder.field(Fields.CURRENT, current);
         builder.field(Fields.TOTAL, total);
-        builder.timeValueField(Fields.TOTAL_TIME_IN_MILLIS, Fields.TOTAL_TIME, totalTimeInMillis);
+        builder.field(Fields.TOTAL_TIME_IN_MILLIS, Fields.TOTAL_TIME, totalTimeInMillis, TimeUnit.MILLISECONDS);
         builder.endObject();
         return builder;
     }

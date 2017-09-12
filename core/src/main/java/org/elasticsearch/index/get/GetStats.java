@@ -27,6 +27,7 @@ import org.elasticsearch.common.xcontent.ToXContentFragment;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 
 import java.io.IOException;
+import java.util.concurrent.TimeUnit;
 
 public class GetStats implements Streamable, ToXContentFragment {
 
@@ -110,11 +111,11 @@ public class GetStats implements Streamable, ToXContentFragment {
     public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         builder.startObject(Fields.GET);
         builder.field(Fields.TOTAL, getCount());
-        builder.timeValueField(Fields.TIME_IN_MILLIS, Fields.TIME, getTimeInMillis());
+        builder.field(Fields.TIME_IN_MILLIS, Fields.TIME, getTimeInMillis(), TimeUnit.MILLISECONDS);
         builder.field(Fields.EXISTS_TOTAL, existsCount);
-        builder.timeValueField(Fields.EXISTS_TIME_IN_MILLIS, Fields.EXISTS_TIME, existsTimeInMillis);
+        builder.field(Fields.EXISTS_TIME_IN_MILLIS, Fields.EXISTS_TIME, existsTimeInMillis, TimeUnit.MILLISECONDS);
         builder.field(Fields.MISSING_TOTAL, missingCount);
-        builder.timeValueField(Fields.MISSING_TIME_IN_MILLIS, Fields.MISSING_TIME, missingTimeInMillis);
+        builder.field(Fields.MISSING_TIME_IN_MILLIS, Fields.MISSING_TIME, missingTimeInMillis, TimeUnit.MILLISECONDS);
         builder.field(Fields.CURRENT, current);
         builder.endObject();
         return builder;

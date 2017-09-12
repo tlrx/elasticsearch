@@ -22,6 +22,7 @@ package org.elasticsearch.monitor.jvm;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Writeable;
+import org.elasticsearch.common.unit.ByteSizeUnit;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.xcontent.ToXContentFragment;
@@ -190,27 +191,27 @@ public class JvmStats implements Writeable, ToXContentFragment {
     public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         builder.startObject(Fields.JVM);
         builder.field(Fields.TIMESTAMP, timestamp);
-        builder.timeValueField(Fields.UPTIME_IN_MILLIS, Fields.UPTIME, uptime);
+        builder.field(Fields.UPTIME_IN_MILLIS, Fields.UPTIME, uptime, TimeUnit.MILLISECONDS);
 
         builder.startObject(Fields.MEM);
 
-        builder.byteSizeField(Fields.HEAP_USED_IN_BYTES, Fields.HEAP_USED, mem.heapUsed);
+        builder.field(Fields.HEAP_USED_IN_BYTES, Fields.HEAP_USED, mem.heapUsed, ByteSizeUnit.BYTES);
         if (mem.getHeapUsedPercent() >= 0) {
             builder.field(Fields.HEAP_USED_PERCENT, mem.getHeapUsedPercent());
         }
-        builder.byteSizeField(Fields.HEAP_COMMITTED_IN_BYTES, Fields.HEAP_COMMITTED, mem.heapCommitted);
-        builder.byteSizeField(Fields.HEAP_MAX_IN_BYTES, Fields.HEAP_MAX, mem.heapMax);
-        builder.byteSizeField(Fields.NON_HEAP_USED_IN_BYTES, Fields.NON_HEAP_USED, mem.nonHeapUsed);
-        builder.byteSizeField(Fields.NON_HEAP_COMMITTED_IN_BYTES, Fields.NON_HEAP_COMMITTED, mem.nonHeapCommitted);
+        builder.field(Fields.HEAP_COMMITTED_IN_BYTES, Fields.HEAP_COMMITTED, mem.heapCommitted, ByteSizeUnit.BYTES);
+        builder.field(Fields.HEAP_MAX_IN_BYTES, Fields.HEAP_MAX, mem.heapMax, ByteSizeUnit.BYTES);
+        builder.field(Fields.NON_HEAP_USED_IN_BYTES, Fields.NON_HEAP_USED, mem.nonHeapUsed, ByteSizeUnit.BYTES);
+        builder.field(Fields.NON_HEAP_COMMITTED_IN_BYTES, Fields.NON_HEAP_COMMITTED, mem.nonHeapCommitted, ByteSizeUnit.BYTES);
 
         builder.startObject(Fields.POOLS);
         for (MemoryPool pool : mem) {
             builder.startObject(pool.getName());
-            builder.byteSizeField(Fields.USED_IN_BYTES, Fields.USED, pool.used);
-            builder.byteSizeField(Fields.MAX_IN_BYTES, Fields.MAX, pool.max);
+            builder.field(Fields.USED_IN_BYTES, Fields.USED, pool.used, ByteSizeUnit.BYTES);
+            builder.field(Fields.MAX_IN_BYTES, Fields.MAX, pool.max, ByteSizeUnit.BYTES);
 
-            builder.byteSizeField(Fields.PEAK_USED_IN_BYTES, Fields.PEAK_USED, pool.peakUsed);
-            builder.byteSizeField(Fields.PEAK_MAX_IN_BYTES, Fields.PEAK_MAX, pool.peakMax);
+            builder.field(Fields.PEAK_USED_IN_BYTES, Fields.PEAK_USED, pool.peakUsed, ByteSizeUnit.BYTES);
+            builder.field(Fields.PEAK_MAX_IN_BYTES, Fields.PEAK_MAX, pool.peakMax, ByteSizeUnit.BYTES);
 
             builder.endObject();
         }
@@ -229,7 +230,7 @@ public class JvmStats implements Writeable, ToXContentFragment {
         for (GarbageCollector collector : gc) {
             builder.startObject(collector.getName());
             builder.field(Fields.COLLECTION_COUNT, collector.getCollectionCount());
-            builder.timeValueField(Fields.COLLECTION_TIME_IN_MILLIS, Fields.COLLECTION_TIME, collector.collectionTime);
+            builder.field(Fields.COLLECTION_TIME_IN_MILLIS, Fields.COLLECTION_TIME, collector.collectionTime, TimeUnit.MILLISECONDS);
             builder.endObject();
         }
         builder.endObject();
@@ -241,8 +242,8 @@ public class JvmStats implements Writeable, ToXContentFragment {
             for (BufferPool bufferPool : bufferPools) {
                 builder.startObject(bufferPool.getName());
                 builder.field(Fields.COUNT, bufferPool.getCount());
-                builder.byteSizeField(Fields.USED_IN_BYTES, Fields.USED, bufferPool.used);
-                builder.byteSizeField(Fields.TOTAL_CAPACITY_IN_BYTES, Fields.TOTAL_CAPACITY, bufferPool.totalCapacity);
+                builder.field(Fields.USED_IN_BYTES, Fields.USED, bufferPool.used, ByteSizeUnit.BYTES);
+                builder.field(Fields.TOTAL_CAPACITY_IN_BYTES, Fields.TOTAL_CAPACITY, bufferPool.totalCapacity, ByteSizeUnit.BYTES);
                 builder.endObject();
             }
             builder.endObject();

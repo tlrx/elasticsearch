@@ -39,6 +39,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Information about a snapshot
@@ -374,7 +375,7 @@ public final class SnapshotInfo implements Comparable<SnapshotInfo>, ToXContent,
         if (verbose || endTime != 0) {
             builder.field(END_TIME, DATE_TIME_FORMATTER.printer().print(endTime));
             builder.field(END_TIME_IN_MILLIS, endTime);
-            builder.timeValueField(DURATION_IN_MILLIS, DURATION, endTime - startTime);
+            builder.field(DURATION_IN_MILLIS, DURATION, endTime - startTime, TimeUnit.MILLISECONDS);
         }
         if (verbose || !shardFailures.isEmpty()) {
             builder.startArray(FAILURES);

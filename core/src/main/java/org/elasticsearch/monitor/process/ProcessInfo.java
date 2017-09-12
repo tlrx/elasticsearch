@@ -27,6 +27,7 @@ import org.elasticsearch.common.xcontent.ToXContentFragment;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 
 import java.io.IOException;
+import java.util.concurrent.TimeUnit;
 
 public class ProcessInfo implements Writeable, ToXContentFragment {
 
@@ -83,7 +84,7 @@ public class ProcessInfo implements Writeable, ToXContentFragment {
     @Override
     public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         builder.startObject(Fields.PROCESS);
-        builder.timeValueField(Fields.REFRESH_INTERVAL_IN_MILLIS, Fields.REFRESH_INTERVAL, refreshInterval);
+        builder.field(Fields.REFRESH_INTERVAL_IN_MILLIS, Fields.REFRESH_INTERVAL, refreshInterval, TimeUnit.MILLISECONDS);
         builder.field(Fields.ID, id);
         builder.field(Fields.MLOCKALL, mlockall);
         builder.endObject();

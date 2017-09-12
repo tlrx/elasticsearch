@@ -32,6 +32,7 @@ import org.elasticsearch.common.xcontent.XContentBuilder;
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 public class SearchStats implements Streamable, ToXContentFragment {
 
@@ -219,19 +220,19 @@ public class SearchStats implements Streamable, ToXContentFragment {
         @Override
         public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
             builder.field(Fields.QUERY_TOTAL, queryCount);
-            builder.timeValueField(Fields.QUERY_TIME_IN_MILLIS, Fields.QUERY_TIME, queryTimeInMillis);
+            builder.field(Fields.QUERY_TIME_IN_MILLIS, Fields.QUERY_TIME, queryTimeInMillis, TimeUnit.MILLISECONDS);
             builder.field(Fields.QUERY_CURRENT, queryCurrent);
 
             builder.field(Fields.FETCH_TOTAL, fetchCount);
-            builder.timeValueField(Fields.FETCH_TIME_IN_MILLIS, Fields.FETCH_TIME, fetchTimeInMillis);
+            builder.field(Fields.FETCH_TIME_IN_MILLIS, Fields.FETCH_TIME, fetchTimeInMillis, TimeUnit.MILLISECONDS);
             builder.field(Fields.FETCH_CURRENT, fetchCurrent);
 
             builder.field(Fields.SCROLL_TOTAL, scrollCount);
-            builder.timeValueField(Fields.SCROLL_TIME_IN_MILLIS, Fields.SCROLL_TIME, scrollTimeInMillis);
+            builder.field(Fields.SCROLL_TIME_IN_MILLIS, Fields.SCROLL_TIME, scrollTimeInMillis, TimeUnit.MILLISECONDS);
             builder.field(Fields.SCROLL_CURRENT, scrollCurrent);
 
             builder.field(Fields.SUGGEST_TOTAL, suggestCount);
-            builder.timeValueField(Fields.SUGGEST_TIME_IN_MILLIS, Fields.SUGGEST_TIME, suggestTimeInMillis);
+            builder.field(Fields.SUGGEST_TIME_IN_MILLIS, Fields.SUGGEST_TIME, suggestTimeInMillis, TimeUnit.MILLISECONDS);
             builder.field(Fields.SUGGEST_CURRENT, suggestCurrent);
 
             return builder;

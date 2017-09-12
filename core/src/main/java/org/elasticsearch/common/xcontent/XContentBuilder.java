@@ -26,6 +26,7 @@ import org.elasticsearch.common.io.stream.BytesStream;
 import org.elasticsearch.common.io.stream.BytesStreamOutput;
 import org.elasticsearch.common.lease.Releasable;
 import org.elasticsearch.common.text.Text;
+import org.elasticsearch.common.unit.ByteSizeUnit;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.unit.TimeValue;
 import org.joda.time.DateTimeZone;
@@ -94,6 +95,7 @@ public final class XContentBuilder implements Releasable, Flushable {
         writers.put(Boolean.class, (b, v) -> b.value((Boolean) v));
         writers.put(Byte.class, (b, v) -> b.value((Byte) v));
         writers.put(byte[].class, (b, v) -> b.value((byte[]) v));
+        writers.put(ByteSizeValue.class, (b, v) -> b.value((ByteSizeValue) v));
         writers.put(BytesRef.class, (b, v) -> b.binaryValue((BytesRef) v));
         writers.put(Date.class, (b, v) -> b.value((Date) v));
         writers.put(Double.class, (b, v) -> b.value((Double) v));
@@ -110,6 +112,7 @@ public final class XContentBuilder implements Releasable, Flushable {
         writers.put(String.class, (b, v) -> b.value((String) v));
         writers.put(String[].class, (b, v) -> b.values((String[]) v));
         writers.put(Text.class, (b, v) -> b.value((Text) v));
+        writers.put(TimeValue.class, (b, v) -> b.value((TimeValue) v));
 
         WRITERS = Collections.unmodifiableMap(writers);
     }
@@ -549,7 +552,7 @@ public final class XContentBuilder implements Releasable, Flushable {
     }
 
     ////////////////////////////////////////////////////////////////////////////
-    // Binary
+    // byte[]
     //////////////////////////////////
 
     public XContentBuilder field(String name, byte[] value) throws IOException {
@@ -580,6 +583,10 @@ public final class XContentBuilder implements Releasable, Flushable {
         generator.writeBinary(value, offset, length);
         return this;
     }
+
+    ////////////////////////////////////////////////////////////////////////////
+    // BytesRef
+    //////////////////////////////////
 
     /**
      * Writes the binary content of the given {@link BytesRef}.
@@ -907,56 +914,156 @@ public final class XContentBuilder implements Releasable, Flushable {
     }
 
     ////////////////////////////////////////////////////////////////////////////
+    // TimeValue
+    //////////////////////////////////
+
+    /**
+     * Outputs a field which name is {@code name} and value is the given {@link TimeValue}
+     * converted to milliseconds.
+     * <p>
+     * When {@link #humanReadable()} is {@code true}, a second field with name {@code humanReadableName}
+     * is outputted and contains the string representation of the {@link TimeValue} as returned by
+     * {@link TimeValue#toString()}
+     *
+     * @param name the name of the field
+     * @param humanReadableName the name fo the field for the string representation of the {@link TimeValue}
+     * @param value the {@link TimeValue}
+     * @return the current {@link XContentBuilder}
+     *
+     * @throws IOException if an {@link IOException} occurs
+     */
+    public XContentBuilder field(String name, String humanReadableName, TimeValue value) throws IOException {
+        if (humanReadable) {
+            if (value != null) {
+                field(humanReadableName, value.toString());
+            } else {
+                nullField(humanReadableName);
+            }
+        }
+        field(name).value(value);
+        return this;
+    }
+
+    /**
+     * Outputs the value of the given {@link TimeValue} converted to milliseconds.
+     *
+     * @param value the {@link TimeValue}
+     * @return the current {@link XContentBuilder}
+     *
+     * @throws IOException if an {@link IOException} occurs
+     */
+    public XContentBuilder value(TimeValue value) throws IOException {
+        if (value == null) {
+            return nullValue();
+        }
+        value(value.getMillis());
+        return this;
+    }
+
+    /**
+     * Outputs a field which name is {@code name} and value is the given {@code value}.
+     * <p>
+     * When {@link #humanReadable()} is {@code true}, a second field with name {@code humanReadableName}
+     * is outputted and contains the string representation (as as returned by {@link TimeValue#toString()})
+     * of a {@link TimeValue} created with the given {@code value} and {@code unit}.
+     *
+     * @param name the name of the field
+     * @param humanReadableName the name fo the field for the string representation of the {@link TimeValue}
+     * @param value the value
+     * @param unit the {@link TimeUnit}
+     * @return the current {@link XContentBuilder}
+     *
+     * @throws IOException if an {@link IOException} occurs
+     */
+    public XContentBuilder field(String name, String humanReadableName, long value, TimeUnit unit) throws IOException {
+        if (humanReadable) {
+            assert unit != null;
+            field(humanReadableName, new TimeValue(value, unit).toString());
+        }
+        field(name, value);
+        return this;
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
     // Misc.
     //////////////////////////////////
 
-    public XContentBuilder timeValueField(String rawFieldName, String readableFieldName, TimeValue timeValue) throws IOException {
+    public XContentBuilder percentageField(String name, String humanReadableName, double percentage) throws IOException {
         if (humanReadable) {
-            field(readableFieldName, timeValue.toString());
+            field(humanReadableName, String.format(Locale.ROOT, "%1.1f%%", percentage));
         }
-        field(rawFieldName, timeValue.millis());
+        field(name, percentage);
         return this;
     }
 
-    public XContentBuilder timeValueField(String rawFieldName, String readableFieldName, long rawTime) throws IOException {
+    ////////////////////////////////////////////////////////////////////////////
+    // ByteSizeValue
+    //////////////////////////////////
+
+    /**
+     * Outputs a field which name is {@code name} and value is the given {@link ByteSizeValue}
+     * converted to {@link org.elasticsearch.common.unit.ByteSizeUnit#BYTES}.
+     * <p>
+     * When {@link #humanReadable()} is {@code true}, a second field with name {@code humanReadableName}
+     * is outputted and contains the string representation of the {@link ByteSizeValue} as returned by
+     * {@link ByteSizeValue#toString()}
+     *
+     * @param name the name of the field
+     * @param humanReadableName the name fo the field for the string representation of the {@link ByteSizeValue}
+     * @param value the {@link ByteSizeValue}
+     * @return the current {@link XContentBuilder}
+     *
+     * @throws IOException if an {@link IOException} occurs
+     */
+    public XContentBuilder field(String name, String humanReadableName, ByteSizeValue value) throws IOException {
         if (humanReadable) {
-            field(readableFieldName, new TimeValue(rawTime).toString());
+            if (value != null) {
+                field(humanReadableName, value.toString());
+            } else {
+                nullField(humanReadableName);
+            }
         }
-        field(rawFieldName, rawTime);
+        field(name).value(value);
         return this;
     }
 
-    public XContentBuilder timeValueField(String rawFieldName, String readableFieldName, long rawTime, TimeUnit timeUnit) throws
-            IOException {
-        if (humanReadable) {
-            field(readableFieldName, new TimeValue(rawTime, timeUnit).toString());
+    /**
+     * Outputs the value of the given {@link ByteSizeValue} converted in bytes.
+     *
+     * @param value the {@link ByteSizeValue}
+     * @return the current {@link XContentBuilder}
+     *
+     * @throws IOException if an {@link IOException} occurs
+     */
+    public XContentBuilder value(ByteSizeValue value) throws IOException {
+        if (value == null) {
+            return nullValue();
         }
-        field(rawFieldName, rawTime);
+        value(value.getBytes());
         return this;
     }
 
-
-    public XContentBuilder percentageField(String rawFieldName, String readableFieldName, double percentage) throws IOException {
+    /**
+     * Outputs a field which name is {@code name} and value is the given {@code value}.
+     * <p>
+     * When {@link #humanReadable()} is {@code true}, a second field with name {@code humanReadableName}
+     * is outputted and contains the string representation (as returned by {@link ByteSizeValue#toString()})
+     * of a {@link ByteSizeValue} created with the given {@code value} and {@code unit}.
+     *
+     * @param name the name of the field
+     * @param humanReadableName the name fo the field for the string representation of the {@link ByteSizeValue}
+     * @param value the value
+     * @param unit the {@link ByteSizeUnit}
+     * @return the current {@link XContentBuilder}
+     *
+     * @throws IOException if an {@link IOException} occurs
+     */
+    public XContentBuilder field(String name, String humanReadableName, long value, ByteSizeUnit unit) throws IOException {
         if (humanReadable) {
-            field(readableFieldName, String.format(Locale.ROOT, "%1.1f%%", percentage));
+            assert unit != null;
+            field(humanReadableName, new ByteSizeValue(value, unit).toString());
         }
-        field(rawFieldName, percentage);
-        return this;
-    }
-
-    public XContentBuilder byteSizeField(String rawFieldName, String readableFieldName, ByteSizeValue byteSizeValue) throws IOException {
-        if (humanReadable) {
-            field(readableFieldName, byteSizeValue.toString());
-        }
-        field(rawFieldName, byteSizeValue.getBytes());
-        return this;
-    }
-
-    public XContentBuilder byteSizeField(String rawFieldName, String readableFieldName, long rawSize) throws IOException {
-        if (humanReadable) {
-            field(readableFieldName, new ByteSizeValue(rawSize).toString());
-        }
-        field(rawFieldName, rawSize);
+        field(name, value);
         return this;
     }
 

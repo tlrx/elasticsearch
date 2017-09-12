@@ -40,6 +40,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Meta data about snapshots that are currently executing
@@ -512,7 +513,7 @@ public class SnapshotsInProgress extends AbstractNamedDiffable<Custom> implement
             }
         }
         builder.endArray();
-        builder.timeValueField(START_TIME_MILLIS, START_TIME, entry.startTime());
+        builder.field(START_TIME_MILLIS, START_TIME, entry.startTime(), TimeUnit.MILLISECONDS);
         builder.field(REPOSITORY_STATE_ID, entry.getRepositoryStateId());
         builder.startArray(SHARDS);
         {

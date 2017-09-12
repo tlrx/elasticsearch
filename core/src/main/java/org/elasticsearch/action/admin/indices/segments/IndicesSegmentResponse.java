@@ -28,6 +28,7 @@ import org.elasticsearch.action.ShardOperationFailedException;
 import org.elasticsearch.action.support.broadcast.BroadcastResponse;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
+import org.elasticsearch.common.unit.ByteSizeUnit;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.xcontent.ToXContentFragment;
 import org.elasticsearch.common.xcontent.XContentBuilder;
@@ -132,8 +133,8 @@ public class IndicesSegmentResponse extends BroadcastResponse implements ToXCont
                         builder.field(Fields.GENERATION, segment.getGeneration());
                         builder.field(Fields.NUM_DOCS, segment.getNumDocs());
                         builder.field(Fields.DELETED_DOCS, segment.getDeletedDocs());
-                        builder.byteSizeField(Fields.SIZE_IN_BYTES, Fields.SIZE, segment.getSizeInBytes());
-                        builder.byteSizeField(Fields.MEMORY_IN_BYTES, Fields.MEMORY, segment.getMemoryInBytes());
+                        builder.field(Fields.SIZE_IN_BYTES, Fields.SIZE, segment.getSizeInBytes(), ByteSizeUnit.BYTES);
+                        builder.field(Fields.MEMORY_IN_BYTES, Fields.MEMORY, segment.getMemoryInBytes(), ByteSizeUnit.BYTES);
                         builder.field(Fields.COMMITTED, segment.isCommitted());
                         builder.field(Fields.SEARCH, segment.isSearch());
                         if (segment.getVersion() != null) {
@@ -197,7 +198,7 @@ public class IndicesSegmentResponse extends BroadcastResponse implements ToXCont
     static void toXContent(XContentBuilder builder, Accountable tree) throws IOException {
         builder.startObject();
         builder.field(Fields.DESCRIPTION, tree.toString());
-        builder.byteSizeField(Fields.SIZE_IN_BYTES, Fields.SIZE, new ByteSizeValue(tree.ramBytesUsed()));
+        builder.field(Fields.SIZE_IN_BYTES, Fields.SIZE, new ByteSizeValue(tree.ramBytesUsed()));
         Collection<Accountable> children = tree.getChildResources();
         if (children.isEmpty() == false) {
             builder.startArray(Fields.CHILDREN);

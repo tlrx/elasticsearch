@@ -23,6 +23,7 @@ import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Streamable;
+import org.elasticsearch.common.unit.ByteSizeUnit;
 import org.elasticsearch.common.xcontent.ToXContentFragment;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 
@@ -90,9 +91,9 @@ public class TranslogStats implements Streamable, ToXContentFragment {
     public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         builder.startObject("translog");
         builder.field("operations", numberOfOperations);
-        builder.byteSizeField("size_in_bytes", "size", translogSizeInBytes);
+        builder.field("size_in_bytes", "size", translogSizeInBytes, ByteSizeUnit.BYTES);
         builder.field("uncommitted_operations", uncommittedOperations);
-        builder.byteSizeField("uncommitted_size_in_bytes", "uncommitted_size", uncommittedSizeInBytes);
+        builder.field("uncommitted_size_in_bytes", "uncommitted_size", uncommittedSizeInBytes, ByteSizeUnit.BYTES);
         builder.endObject();
         return builder;
     }

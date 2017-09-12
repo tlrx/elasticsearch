@@ -25,6 +25,7 @@ import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Writeable;
+import org.elasticsearch.common.unit.ByteSizeUnit;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.xcontent.ToXContentFragment;
 import org.elasticsearch.common.xcontent.ToXContentObject;
@@ -165,13 +166,13 @@ public class FsInfo implements Iterable<FsInfo.Path>, Writeable, ToXContentFragm
             }
 
             if (total != -1) {
-                builder.byteSizeField(Fields.TOTAL_IN_BYTES, Fields.TOTAL, total);
+                builder.field(Fields.TOTAL_IN_BYTES, Fields.TOTAL, total, ByteSizeUnit.BYTES);
             }
             if (free != -1) {
-                builder.byteSizeField(Fields.FREE_IN_BYTES, Fields.FREE, free);
+                builder.field(Fields.FREE_IN_BYTES, Fields.FREE, free, ByteSizeUnit.BYTES);
             }
             if (available != -1) {
-                builder.byteSizeField(Fields.AVAILABLE_IN_BYTES, Fields.AVAILABLE, available);
+                builder.field(Fields.AVAILABLE_IN_BYTES, Fields.AVAILABLE, available, ByteSizeUnit.BYTES);
             }
 
             builder.endObject();
@@ -530,8 +531,8 @@ public class FsInfo implements Iterable<FsInfo.Path>, Writeable, ToXContentFragm
             builder.startObject(Fields.LEAST_ESTIMATE);
             {
                 builder.field(Fields.PATH, leastDiskEstimate.getPath());
-                builder.byteSizeField(Fields.TOTAL_IN_BYTES, Fields.TOTAL, leastDiskEstimate.getTotalBytes());
-                builder.byteSizeField(Fields.AVAILABLE_IN_BYTES, Fields.AVAILABLE, leastDiskEstimate.getFreeBytes());
+                builder.field(Fields.TOTAL_IN_BYTES, Fields.TOTAL, leastDiskEstimate.getTotalBytes(), ByteSizeUnit.BYTES);
+                builder.field(Fields.AVAILABLE_IN_BYTES, Fields.AVAILABLE, leastDiskEstimate.getFreeBytes(), ByteSizeUnit.BYTES);
                 builder.field(Fields.USAGE_PERCENTAGE, leastDiskEstimate.getUsedDiskAsPercentage());
             }
             builder.endObject();
@@ -541,8 +542,8 @@ public class FsInfo implements Iterable<FsInfo.Path>, Writeable, ToXContentFragm
             builder.startObject(Fields.MOST_ESTIMATE);
             {
                 builder.field(Fields.PATH, mostDiskEstimate.getPath());
-                builder.byteSizeField(Fields.TOTAL_IN_BYTES, Fields.TOTAL, mostDiskEstimate.getTotalBytes());
-                builder.byteSizeField(Fields.AVAILABLE_IN_BYTES, Fields.AVAILABLE, mostDiskEstimate.getFreeBytes());
+                builder.field(Fields.TOTAL_IN_BYTES, Fields.TOTAL, mostDiskEstimate.getTotalBytes(), ByteSizeUnit.BYTES);
+                builder.field(Fields.AVAILABLE_IN_BYTES, Fields.AVAILABLE, mostDiskEstimate.getFreeBytes(), ByteSizeUnit.BYTES);
                 builder.field(Fields.USAGE_PERCENTAGE, mostDiskEstimate.getUsedDiskAsPercentage());
             }
             builder.endObject();

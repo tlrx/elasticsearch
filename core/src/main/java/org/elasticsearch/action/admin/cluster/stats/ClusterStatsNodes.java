@@ -30,6 +30,7 @@ import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.network.NetworkModule;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.transport.TransportAddress;
+import org.elasticsearch.common.unit.ByteSizeUnit;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.xcontent.ToXContentFragment;
@@ -47,6 +48,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class ClusterStatsNodes implements ToXContentFragment {
@@ -488,7 +490,7 @@ public class ClusterStatsNodes implements ToXContentFragment {
         @Override
         public XContentBuilder toXContent(XContentBuilder builder, Params params)
                 throws IOException {
-            builder.timeValueField(Fields.MAX_UPTIME_IN_MILLIS, Fields.MAX_UPTIME, maxUptime);
+            builder.field(Fields.MAX_UPTIME_IN_MILLIS, Fields.MAX_UPTIME, maxUptime, TimeUnit.MILLISECONDS);
             builder.startArray(Fields.VERSIONS);
             for (ObjectIntCursor<JvmVersion> v : versions) {
                 builder.startObject();
@@ -501,8 +503,8 @@ public class ClusterStatsNodes implements ToXContentFragment {
             }
             builder.endArray();
             builder.startObject(Fields.MEM);
-            builder.byteSizeField(Fields.HEAP_USED_IN_BYTES, Fields.HEAP_USED, heapUsed);
-            builder.byteSizeField(Fields.HEAP_MAX_IN_BYTES, Fields.HEAP_MAX, heapMax);
+            builder.field(Fields.HEAP_USED_IN_BYTES, Fields.HEAP_USED, heapUsed, ByteSizeUnit.BYTES);
+            builder.field(Fields.HEAP_MAX_IN_BYTES, Fields.HEAP_MAX, heapMax, ByteSizeUnit.BYTES);
             builder.endObject();
 
             builder.field(Fields.THREADS, threads);

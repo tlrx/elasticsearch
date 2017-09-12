@@ -145,7 +145,7 @@ public class CollectorResult implements ToXContentObject, Writeable {
         builder = builder.startObject()
                 .field(NAME.getPreferredName(), getName())
                 .field(REASON.getPreferredName(), getReason())
-                .timeValueField(TIME_NANOS.getPreferredName(), TIME.getPreferredName(), getTime(), TimeUnit.NANOSECONDS);
+                .field(TIME_NANOS.getPreferredName(), TIME.getPreferredName(), getTime(), TimeUnit.NANOSECONDS);
 
         if (!children.isEmpty()) {
             builder = builder.startArray(CHILDREN.getPreferredName());

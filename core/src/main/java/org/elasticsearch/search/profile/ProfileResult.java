@@ -150,7 +150,7 @@ public final class ProfileResult implements Writeable, ToXContentObject {
         builder = builder.startObject()
                 .field(TYPE.getPreferredName(), type)
                 .field(DESCRIPTION.getPreferredName(), description)
-                .timeValueField(NODE_TIME_RAW.getPreferredName(), NODE_TIME.getPreferredName(), getTime(), TimeUnit.NANOSECONDS)
+                .field(NODE_TIME_RAW.getPreferredName(), NODE_TIME.getPreferredName(), getTime(), TimeUnit.NANOSECONDS)
                 .field(BREAKDOWN.getPreferredName(), timings);
 
         if (!children.isEmpty()) {

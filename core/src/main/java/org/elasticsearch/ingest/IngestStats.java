@@ -157,7 +157,7 @@ public class IngestStats implements Writeable, ToXContentFragment {
         @Override
         public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
             builder.field("count", ingestCount);
-            builder.timeValueField("time_in_millis", "time", ingestTimeInMillis, TimeUnit.MILLISECONDS);
+            builder.field("time_in_millis", "time", ingestTimeInMillis, TimeUnit.MILLISECONDS);
             builder.field("current", ingestCurrent);
             builder.field("failed", ingestFailedCount);
             return builder;

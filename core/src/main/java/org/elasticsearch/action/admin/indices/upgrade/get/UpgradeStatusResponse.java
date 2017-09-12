@@ -23,7 +23,7 @@ import org.elasticsearch.action.ShardOperationFailedException;
 import org.elasticsearch.action.support.broadcast.BroadcastResponse;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
-import org.elasticsearch.common.xcontent.ToXContent.Params;
+import org.elasticsearch.common.unit.ByteSizeUnit;
 import org.elasticsearch.common.xcontent.ToXContentFragment;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 
@@ -116,9 +116,9 @@ public class UpgradeStatusResponse extends BroadcastResponse implements ToXConte
 
     @Override
     public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
-        builder.byteSizeField(Fields.SIZE_IN_BYTES, Fields.SIZE, getTotalBytes());
-        builder.byteSizeField(Fields.SIZE_TO_UPGRADE_IN_BYTES, Fields.SIZE_TO_UPGRADE, getToUpgradeBytes());
-        builder.byteSizeField(Fields.SIZE_TO_UPGRADE_ANCIENT_IN_BYTES, Fields.SIZE_TO_UPGRADE_ANCIENT, getToUpgradeBytesAncient());
+        builder.field(Fields.SIZE_IN_BYTES, Fields.SIZE, getTotalBytes(), ByteSizeUnit.BYTES);
+        builder.field(Fields.SIZE_TO_UPGRADE_IN_BYTES, Fields.SIZE_TO_UPGRADE, getToUpgradeBytes(), ByteSizeUnit.BYTES);
+        builder.field(Fields.SIZE_TO_UPGRADE_ANCIENT_IN_BYTES, Fields.SIZE_TO_UPGRADE_ANCIENT, getToUpgradeBytesAncient(), ByteSizeUnit.BYTES);
 
         String level = params.param("level", "indices");
         boolean outputShards = "shards".equals(level);
@@ -128,9 +128,9 @@ public class UpgradeStatusResponse extends BroadcastResponse implements ToXConte
             for (IndexUpgradeStatus indexUpgradeStatus : getIndices().values()) {
                 builder.startObject(indexUpgradeStatus.getIndex());
 
-                builder.byteSizeField(Fields.SIZE_IN_BYTES, Fields.SIZE, indexUpgradeStatus.getTotalBytes());
-                builder.byteSizeField(Fields.SIZE_TO_UPGRADE_IN_BYTES, Fields.SIZE_TO_UPGRADE, indexUpgradeStatus.getToUpgradeBytes());
-                builder.byteSizeField(Fields.SIZE_TO_UPGRADE_ANCIENT_IN_BYTES, Fields.SIZE_TO_UPGRADE_ANCIENT, indexUpgradeStatus.getToUpgradeBytesAncient());
+                builder.field(Fields.SIZE_IN_BYTES, Fields.SIZE, indexUpgradeStatus.getTotalBytes(), ByteSizeUnit.BYTES);
+                builder.field(Fields.SIZE_TO_UPGRADE_IN_BYTES, Fields.SIZE_TO_UPGRADE, indexUpgradeStatus.getToUpgradeBytes(), ByteSizeUnit.BYTES);
+                builder.field(Fields.SIZE_TO_UPGRADE_ANCIENT_IN_BYTES, Fields.SIZE_TO_UPGRADE_ANCIENT, indexUpgradeStatus.getToUpgradeBytesAncient(), ByteSizeUnit.BYTES);
                 if (outputShards) {
                     builder.startObject(Fields.SHARDS);
                     for (IndexShardUpgradeStatus indexShardUpgradeStatus : indexUpgradeStatus) {
@@ -138,9 +138,9 @@ public class UpgradeStatusResponse extends BroadcastResponse implements ToXConte
                         for (ShardUpgradeStatus shardUpgradeStatus : indexShardUpgradeStatus) {
                             builder.startObject();
 
-                            builder.byteSizeField(Fields.SIZE_IN_BYTES, Fields.SIZE, getTotalBytes());
-                            builder.byteSizeField(Fields.SIZE_TO_UPGRADE_IN_BYTES, Fields.SIZE_TO_UPGRADE, getToUpgradeBytes());
-                            builder.byteSizeField(Fields.SIZE_TO_UPGRADE_ANCIENT_IN_BYTES, Fields.SIZE_TO_UPGRADE_ANCIENT, getToUpgradeBytesAncient());
+                            builder.field(Fields.SIZE_IN_BYTES, Fields.SIZE, getTotalBytes(), ByteSizeUnit.BYTES);
+                            builder.field(Fields.SIZE_TO_UPGRADE_IN_BYTES, Fields.SIZE_TO_UPGRADE, getToUpgradeBytes(), ByteSizeUnit.BYTES);
+                            builder.field(Fields.SIZE_TO_UPGRADE_ANCIENT_IN_BYTES, Fields.SIZE_TO_UPGRADE_ANCIENT, getToUpgradeBytesAncient(), ByteSizeUnit.BYTES);
 
                             builder.startObject(Fields.ROUTING);
                             builder.field(Fields.STATE, shardUpgradeStatus.getShardRouting().state());

@@ -23,6 +23,7 @@ import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Writeable;
 import org.elasticsearch.common.transport.BoundTransportAddress;
+import org.elasticsearch.common.unit.ByteSizeUnit;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.xcontent.ToXContentFragment;
 import org.elasticsearch.common.xcontent.XContentBuilder;
@@ -63,7 +64,7 @@ public class HttpInfo implements Writeable, ToXContentFragment {
         builder.startObject(Fields.HTTP);
         builder.array(Fields.BOUND_ADDRESS, (Object[]) address.boundAddresses());
         builder.field(Fields.PUBLISH_ADDRESS, address.publishAddress().toString());
-        builder.byteSizeField(Fields.MAX_CONTENT_LENGTH_IN_BYTES, Fields.MAX_CONTENT_LENGTH, maxContentLength);
+        builder.field(Fields.MAX_CONTENT_LENGTH_IN_BYTES, Fields.MAX_CONTENT_LENGTH, maxContentLength, ByteSizeUnit.BYTES);
         builder.endObject();
         return builder;
     }

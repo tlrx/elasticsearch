@@ -22,13 +22,14 @@ package org.elasticsearch.monitor.process;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Writeable;
+import org.elasticsearch.common.unit.ByteSizeUnit;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.unit.TimeValue;
-import org.elasticsearch.common.xcontent.ToXContent.Params;
 import org.elasticsearch.common.xcontent.ToXContentFragment;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 
 import java.io.IOException;
+import java.util.concurrent.TimeUnit;
 
 public class ProcessStats implements Writeable, ToXContentFragment {
 
@@ -108,12 +109,12 @@ public class ProcessStats implements Writeable, ToXContentFragment {
         if (cpu != null) {
             builder.startObject(Fields.CPU);
             builder.field(Fields.PERCENT, cpu.percent);
-            builder.timeValueField(Fields.TOTAL_IN_MILLIS, Fields.TOTAL, cpu.total);
+            builder.field(Fields.TOTAL_IN_MILLIS, Fields.TOTAL, cpu.total, TimeUnit.MILLISECONDS);
             builder.endObject();
         }
         if (mem != null) {
             builder.startObject(Fields.MEM);
-            builder.byteSizeField(Fields.TOTAL_VIRTUAL_IN_BYTES, Fields.TOTAL_VIRTUAL, mem.totalVirtual);
+            builder.field(Fields.TOTAL_VIRTUAL_IN_BYTES, Fields.TOTAL_VIRTUAL, mem.totalVirtual, ByteSizeUnit.BYTES);
             builder.endObject();
         }
         builder.endObject();

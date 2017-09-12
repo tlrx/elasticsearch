@@ -26,7 +26,6 @@ import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Writeable;
 import org.elasticsearch.common.unit.TimeValue;
-import org.elasticsearch.common.xcontent.ToXContent.Params;
 import org.elasticsearch.common.xcontent.ToXContentObject;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.tasks.CancellableTask;
@@ -387,12 +386,12 @@ public class BulkByScrollTask extends CancellableTask {
                 builder.field("search", searchRetries);
             }
             builder.endObject();
-            builder.timeValueField("throttled_millis", "throttled", throttled);
+            builder.field("throttled_millis", "throttled", throttled);
             builder.field("requests_per_second", requestsPerSecond == Float.POSITIVE_INFINITY ? -1 : requestsPerSecond);
             if (reasonCancelled != null) {
                 builder.field("canceled", reasonCancelled);
             }
-            builder.timeValueField("throttled_until_millis", "throttled_until", throttledUntil);
+            builder.field("throttled_until_millis", "throttled_until", throttledUntil);
             if (false == sliceStatuses.isEmpty()) {
                 builder.startArray("slices");
                 for (StatusOrException slice : sliceStatuses) {

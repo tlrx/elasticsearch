@@ -23,6 +23,7 @@ import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Writeable;
+import org.elasticsearch.common.unit.ByteSizeUnit;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.xcontent.ToXContentFragment;
 import org.elasticsearch.common.xcontent.XContentBuilder;
@@ -75,9 +76,9 @@ public class DiskUsage implements ToXContentFragment, Writeable {
 
     XContentBuilder toShortXContent(XContentBuilder builder) throws IOException {
         builder.field("path", this.path);
-        builder.byteSizeField("total_bytes", "total", this.totalBytes);
-        builder.byteSizeField("used_bytes", "used", this.getUsedBytes());
-        builder.byteSizeField("free_bytes", "free", this.freeBytes);
+        builder.field("total_bytes", "total", this.totalBytes, ByteSizeUnit.BYTES);
+        builder.field("used_bytes", "used", this.getUsedBytes(), ByteSizeUnit.BYTES);
+        builder.field("free_bytes", "free", this.freeBytes, ByteSizeUnit.BYTES);
         builder.field("free_disk_percent", truncatePercent(this.getFreeDiskAsPercentage()));
         builder.field("used_disk_percent", truncatePercent(this.getUsedDiskAsPercentage()));
         return builder;

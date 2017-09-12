@@ -432,7 +432,7 @@ public final class IndexGraveyard implements MetaData.Custom {
             builder.startObject();
             builder.field(INDEX_KEY);
             index.toXContent(builder, params);
-            builder.timeValueField(DELETE_DATE_IN_MILLIS_KEY, DELETE_DATE_KEY, deleteDateInMillis, TimeUnit.MILLISECONDS);
+            builder.field(DELETE_DATE_IN_MILLIS_KEY, DELETE_DATE_KEY, deleteDateInMillis, TimeUnit.MILLISECONDS);
             return builder.endObject();
         }
 

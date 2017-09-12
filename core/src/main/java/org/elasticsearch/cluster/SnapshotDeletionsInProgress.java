@@ -32,6 +32,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.TimeUnit;
 
 /**
  * A class that represents the snapshot deletions that are in progress in the cluster.
@@ -145,7 +146,7 @@ public class SnapshotDeletionsInProgress extends AbstractNamedDiffable<Custom> i
             {
                 builder.field("repository", entry.snapshot.getRepository());
                 builder.field("snapshot", entry.snapshot.getSnapshotId().getName());
-                builder.timeValueField("start_time_millis", "start_time", entry.startTime);
+                builder.field("start_time_millis", "start_time", entry.startTime, TimeUnit.MILLISECONDS);
                 builder.field("repository_state_id", entry.repositoryStateId);
             }
             builder.endObject();

@@ -22,7 +22,6 @@ package org.elasticsearch.common.xcontent;
 import com.fasterxml.jackson.core.JsonGenerationException;
 import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.core.JsonParseException;
-
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.Constants;
 import org.elasticsearch.ElasticsearchException;
@@ -34,7 +33,10 @@ import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.geo.GeoPoint;
 import org.elasticsearch.common.io.PathUtils;
 import org.elasticsearch.common.text.Text;
+import org.elasticsearch.common.unit.ByteSizeUnit;
+import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.unit.DistanceUnit;
+import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.xcontent.XContentParser.Token;
 import org.elasticsearch.test.ESTestCase;
 import org.hamcrest.Matcher;
@@ -162,6 +164,77 @@ public abstract class BaseXContentTestCase extends ESTestCase {
         assertResult("{'boolean':null}", () -> builder().startObject().field("boolean").value((Boolean) null).endObject());
         assertResult("{'boolean':true}", () -> builder().startObject().field("boolean").value(Boolean.TRUE).endObject());
         assertResult("{'boolean':false}", () -> builder().startObject().field("boolean").value(Boolean.FALSE).endObject());
+    }
+
+    public void testByteSizeValue() throws Exception {
+        assertResult("{'size':null}", () -> builder().startObject().field("size", (ByteSizeValue) null).endObject());
+        assertResult("{'size':null}", () -> builder().startObject().field("size").value((ByteSizeValue) null).endObject());
+
+        final ByteSizeValue size = new ByteSizeValue(123, ByteSizeUnit.MB);
+        assertResult("{'size':128974848}", () -> builder().startObject().field("size", size).endObject());
+        assertResult("{'size':128974848}", () -> builder().startObject().field("size").value(size).endObject());
+
+        assertResult("{'size_in_bytes':128974848}", () ->
+                builder().startObject().field("size_in_bytes", "size", size).endObject());
+
+        assertResult("{'size_in_bytes':128974848}", () ->
+                builder().humanReadable(false).startObject().field("size_in_bytes", "size", size).endObject());
+        assertResult("{'size':'123mb','size_in_bytes':128974848}", () ->
+                builder().humanReadable(true).startObject().field("size_in_bytes", "size", size).endObject());
+        assertResult("{'size':null,'size_in_bytes':null}", () ->
+                builder().humanReadable(true).startObject().field("size_in_bytes", "size", (ByteSizeValue) null).endObject());
+
+        assertResult("{'size_in_bytes':128974848}", () ->
+                builder().humanReadable(false).startObject().field("size_in_bytes", "size", 128974848, ByteSizeUnit.BYTES).endObject());
+        assertResult("{'size':'123mb','size_in_bytes':128974848}", () ->
+                builder().humanReadable(true).startObject().field("size_in_bytes", "size", 128974848, ByteSizeUnit.BYTES).endObject());
+    }
+
+    public void testTimeValue() throws Exception {
+        assertResult("{'time':null}", () -> builder().startObject().field("time", (TimeValue) null).endObject());
+        assertResult("{'time':null}", () -> builder().startObject().field("time").value((TimeValue) null).endObject());
+
+        final long nanos = 26539577779454L;
+        final TimeValue timeValue = new TimeValue(nanos, TimeUnit.NANOSECONDS);
+
+        assertResult("{'time_in_millis':26539577}", () ->
+                builder().startObject().field("time_in_millis", timeValue).endObject());
+        assertResult("{'time_in_millis':26539577}", () ->
+                builder().humanReadable(false).startObject().field("time_in_millis", timeValue).endObject());
+        assertResult("{'time_in_millis':26539577}", () ->
+                builder().humanReadable(true).startObject().field("time_in_millis", timeValue).endObject());
+
+        assertResult("{'time_in_millis':26539577}", () ->
+                builder().startObject().field("time_in_millis").value(timeValue).endObject());
+        assertResult("{'time_in_millis':26539577}", () ->
+                builder().humanReadable(false).startObject().field("time_in_millis").value(timeValue).endObject());
+        assertResult("{'time_in_millis':26539577}", () ->
+                builder().humanReadable(true).startObject().field("time_in_millis").value(timeValue).endObject());
+
+        assertResult("{'time_in_millis':26539577}", () ->
+                builder().startObject().field("time_in_millis", "time", timeValue).endObject());
+        assertResult("{'time_in_millis':26539577}", () ->
+                builder().humanReadable(false).startObject().field("time_in_millis", "time", timeValue).endObject());
+        assertResult("{'time':'7.3h','time_in_millis':26539577}", () ->
+                builder().humanReadable(true).startObject().field("time_in_millis", "time", timeValue).endObject());
+        assertResult("{'time':null,'time_in_millis':null}", () ->
+                builder().humanReadable(true).startObject().field("time_in_millis", "time", (TimeValue) null).endObject());
+
+        assertResult("{'time_in_nanos':26539577779454}", () ->
+                builder().startObject().field("time_in_nanos", "time", timeValue.getNanos(), TimeUnit.NANOSECONDS).endObject());
+        assertResult("{'time_in_nanos':26539577779454}", () ->
+                builder().humanReadable(false).startObject().field("time_in_nanos", "time", nanos, TimeUnit.NANOSECONDS).endObject());
+        assertResult("{'time':'7.3h','time_in_nanos':26539577779454}", () ->
+                builder().humanReadable(true).startObject().field("time_in_nanos", "time", nanos, TimeUnit.NANOSECONDS).endObject());
+
+        final long millis = timeValue.getMillis();
+        assertResult("{'time_in_millis':26539577}", () ->
+                builder().startObject().field("time_in_millis", "time", millis, TimeUnit.MILLISECONDS).endObject());
+        assertResult("{'time_in_millis':26539577}", () ->
+                builder().humanReadable(false).startObject().field("time_in_millis", "time", millis, TimeUnit.MILLISECONDS).endObject());
+        assertResult("{'time':'7.3h','time_in_millis':26539577}", () ->
+                builder().humanReadable(true).startObject().field("time_in_millis", "time", millis, TimeUnit.MILLISECONDS).endObject());
+
     }
 
     public void testBytes() throws IOException {

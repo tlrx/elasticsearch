@@ -29,6 +29,7 @@ import org.elasticsearch.common.xcontent.XContentBuilder;
 
 import java.io.IOException;
 import java.util.Objects;
+import java.util.concurrent.TimeUnit;
 
 public class RefreshStats implements Streamable, ToXContentFragment {
 
@@ -96,7 +97,7 @@ public class RefreshStats implements Streamable, ToXContentFragment {
     public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         builder.startObject("refresh");
         builder.field("total", total);
-        builder.timeValueField("total_time_in_millis", "total_time", totalTimeInMillis);
+        builder.field("total_time_in_millis", "total_time", totalTimeInMillis, TimeUnit.MILLISECONDS);
         builder.field("listeners", listeners);
         builder.endObject();
         return builder;

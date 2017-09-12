@@ -22,8 +22,8 @@ package org.elasticsearch.transport;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Writeable;
+import org.elasticsearch.common.unit.ByteSizeUnit;
 import org.elasticsearch.common.unit.ByteSizeValue;
-import org.elasticsearch.common.xcontent.ToXContent.Params;
 import org.elasticsearch.common.xcontent.ToXContentFragment;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 
@@ -107,9 +107,9 @@ public class TransportStats implements Writeable, ToXContentFragment {
         builder.startObject(Fields.TRANSPORT);
         builder.field(Fields.SERVER_OPEN, serverOpen);
         builder.field(Fields.RX_COUNT, rxCount);
-        builder.byteSizeField(Fields.RX_SIZE_IN_BYTES, Fields.RX_SIZE, rxSize);
+        builder.field(Fields.RX_SIZE_IN_BYTES, Fields.RX_SIZE, rxSize, ByteSizeUnit.BYTES);
         builder.field(Fields.TX_COUNT, txCount);
-        builder.byteSizeField(Fields.TX_SIZE_IN_BYTES, Fields.TX_SIZE, txSize);
+        builder.field(Fields.TX_SIZE_IN_BYTES, Fields.TX_SIZE, txSize, ByteSizeUnit.BYTES);
         builder.endObject();
         return builder;
     }
