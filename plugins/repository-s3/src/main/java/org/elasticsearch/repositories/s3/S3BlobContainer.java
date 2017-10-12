@@ -27,6 +27,9 @@ import com.amazonaws.services.s3.model.ObjectListing;
 import com.amazonaws.services.s3.model.ObjectMetadata;
 import com.amazonaws.services.s3.model.S3Object;
 import com.amazonaws.services.s3.model.S3ObjectSummary;
+import com.amazonaws.services.s3.transfer.TransferManager;
+import com.amazonaws.services.s3.transfer.TransferManagerBuilder;
+import com.amazonaws.services.s3.transfer.Upload;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.blobstore.BlobMetaData;
 import org.elasticsearch.common.blobstore.BlobPath;
@@ -34,11 +37,9 @@ import org.elasticsearch.common.blobstore.BlobStoreException;
 import org.elasticsearch.common.blobstore.support.AbstractBlobContainer;
 import org.elasticsearch.common.blobstore.support.PlainBlobMetaData;
 import org.elasticsearch.common.collect.MapBuilder;
-import org.elasticsearch.common.io.Streams;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.NoSuchFileException;
 import java.security.AccessController;
@@ -91,8 +92,28 @@ class S3BlobContainer extends AbstractBlobContainer {
         if (blobExists(blobName)) {
             throw new FileAlreadyExistsException("blob [" + blobName + "] already exists, cannot overwrite");
         }
-        try (OutputStream stream = createOutput(blobName)) {
-            Streams.copy(inputStream, stream);
+
+        final TransferManager transferManager = TransferManagerBuilder.standard()
+                                                                      .withS3Client(blobStore.client())
+                                                                      .withMultipartUploadThreshold((long) blobStore.bufferSizeInBytes())
+                                                                      .withShutDownThreadPools(true)
+                                                                      .build();
+        try {
+            final ObjectMetadata metadata = new ObjectMetadata();
+            metadata.setContentLength(blobSize);
+            metadata.setContentType("application/octet-stream");
+            if (blobStore.serverSideEncryption()){
+                metadata.setSSEAlgorithm(ObjectMetadata.AES_256_SERVER_SIDE_ENCRYPTION);
+            }
+
+            SocketAccess.doPrivilegedIOException(() -> {
+                Upload upload = transferManager.upload(blobStore.bucket(), buildKey(blobName), inputStream, metadata);
+                return upload.waitForUploadResult();
+            });
+        } finally {
+            // Close the TransferManager, this will shut down the underlying executor service
+            // but we don't want the S3Client to be closed too.
+            transferManager.shutdownNow(false);
         }
     }
 
@@ -107,12 +128,6 @@ class S3BlobContainer extends AbstractBlobContainer {
         } catch (AmazonClientException e) {
             throw new IOException("Exception when deleting blob [" + blobName + "]", e);
         }
-    }
-
-    private OutputStream createOutput(final String blobName) throws IOException {
-        // UploadS3OutputStream does buffering & retry logic internally
-        return new DefaultS3OutputStream(blobStore, blobStore.bucket(), buildKey(blobName),
-            blobStore.bufferSizeInBytes(), blobStore.serverSideEncryption());
     }
 
     @Override

@@ -1,0 +1,57 @@
+PUT _snapshot/my_s3_repository?pretty
+{
+  "type": "s3",
+  "settings": {
+    "bucket": "test.eu-west-1.elasticsearch.org",
+    "region": "eu-west-1",
+    "base_path": "test-tlrx"
+  }
+}
+
+
+
+GET /_cat/indices?v
+health status index    uuid                   pri rep docs.count docs.deleted store.size pri.store.size
+green  open   geonames qBlGfoHcRTu4pRn4LL_cOA   5   0   11396503            0      3.1gb          3.1gb
+
+GET /_cat/shards?v
+index    shard prirep state      docs   store ip        node
+geonames 3     p      STARTED 2280624 636.3mb 127.0.0.1 J4-dnHE
+geonames 1     p      STARTED 2280629   640mb 127.0.0.1 J4-dnHE
+geonames 4     p      STARTED 2278713 637.3mb 127.0.0.1 J4-dnHE
+geonames 2     p      STARTED 2279461 635.8mb 127.0.0.1 J4-dnHE
+geonames 0     p      STARTED 2277076 633.9mb 127.0.0.1 J4-dnHE
+
+
+POST /_snapshot/my_s3_repository/snapshot-0?pretty
+
+GET /_snapshot/my_s3_repository/_all?pretty
+
+{
+  "snapshots" : [
+    {
+      "snapshot" : "snapshot-0",
+      "uuid" : "6YGhZO3JRCaJdMy8ri487g",
+      "version_id" : 7000001,
+      "version" : "7.0.0-alpha1",
+      "indices" : [
+        "geonames"
+      ],
+      "state" : "SUCCESS",
+      "start_time" : "2017-10-12T13:20:34.170Z",
+      "start_time_in_millis" : 1507814434170,
+      "end_time" : "2017-10-12T13:35:54.164Z",
+      "end_time_in_millis" : 1507815354164,
+      "duration_in_millis" : 919994,
+      "failures" : [ ],
+      "shards" : {
+        "total" : 5,
+        "failed" : 0,
+        "successful" : 5
+      }
+    }
+  ]
+}
+
+POST /_snapshot/my_s3_repository/snapshot-0/_restore?pretty
+

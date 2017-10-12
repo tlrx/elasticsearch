@@ -19,19 +19,15 @@
 
 package org.elasticsearch.repositories.s3;
 
-import java.util.HashMap;
-import java.util.Map;
-import java.util.function.Function;
-
 import com.amazonaws.ClientConfiguration;
 import com.amazonaws.auth.AWSCredentials;
 import com.amazonaws.auth.AWSCredentialsProvider;
+import com.amazonaws.auth.AWSStaticCredentialsProvider;
 import com.amazonaws.auth.BasicAWSCredentials;
 import com.amazonaws.auth.InstanceProfileCredentialsProvider;
 import com.amazonaws.http.IdleConnectionReaper;
-import com.amazonaws.internal.StaticCredentialsProvider;
 import com.amazonaws.services.s3.AmazonS3;
-import com.amazonaws.services.s3.AmazonS3Client;
+import com.amazonaws.services.s3.AmazonS3ClientBuilder;
 import org.apache.logging.log4j.Logger;
 import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.common.Strings;
@@ -41,6 +37,10 @@ import org.elasticsearch.common.settings.SecureString;
 import org.elasticsearch.common.settings.Setting;
 import org.elasticsearch.common.settings.Settings;
 
+import java.util.HashMap;
+import java.util.Map;
+import java.util.function.Function;
+
 
 class InternalAwsS3Service extends AbstractLifecycleComponent implements AwsS3Service {
 
@@ -49,7 +49,7 @@ class InternalAwsS3Service extends AbstractLifecycleComponent implements AwsS3Se
 
     private final Map<String, S3ClientSettings> clientsSettings;
 
-    private final Map<String, AmazonS3Client> clientsCache = new HashMap<>();
+    private final Map<String, AmazonS3> clientsCache = new HashMap<>();
 
     InternalAwsS3Service(Settings settings, Map<String, S3ClientSettings> clientsSettings) {
         super(settings);
@@ -59,7 +59,7 @@ class InternalAwsS3Service extends AbstractLifecycleComponent implements AwsS3Se
     @Override
     public synchronized AmazonS3 client(Settings repositorySettings) {
         String clientName = CLIENT_NAME.get(repositorySettings);
-        AmazonS3Client client = clientsCache.get(clientName);
+        AmazonS3 client = clientsCache.get(clientName);
         if (client != null) {
             return client;
         }
@@ -75,7 +75,7 @@ class InternalAwsS3Service extends AbstractLifecycleComponent implements AwsS3Se
         AWSCredentialsProvider credentials = buildCredentials(logger, deprecationLogger, clientSettings, repositorySettings);
         ClientConfiguration configuration = buildConfiguration(clientSettings, repositorySettings);
 
-        client = new AmazonS3Client(credentials, configuration);
+        client = AmazonS3ClientBuilder.standard().withCredentials(credentials).withClientConfiguration(configuration).build();
 
         if (Strings.hasText(clientSettings.endpoint)) {
             client.setEndpoint(clientSettings.endpoint);
@@ -135,16 +135,8 @@ class InternalAwsS3Service extends AbstractLifecycleComponent implements AwsS3Se
             return new PrivilegedInstanceProfileCredentialsProvider();
         } else {
             logger.debug("Using basic key/secret credentials");
-            return new StaticCredentialsProvider(credentials);
+            return new AWSStaticCredentialsProvider(credentials);
         }
-    }
-
-    /** Returns the value for a given setting from the repository, or returns the fallback value. */
-    private static <T> T getRepoValue(Settings repositorySettings, Setting<T> repositorySetting, T fallback) {
-        if (repositorySetting.exists(repositorySettings)) {
-            return repositorySetting.get(repositorySettings);
-        }
-        return fallback;
     }
 
     @Override
@@ -157,7 +149,7 @@ class InternalAwsS3Service extends AbstractLifecycleComponent implements AwsS3Se
 
     @Override
     protected void doClose() throws ElasticsearchException {
-        for (AmazonS3Client client : clientsCache.values()) {
+        for (AmazonS3 client : clientsCache.values()) {
             client.shutdown();
         }
 
