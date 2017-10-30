@@ -104,12 +104,9 @@ public final class RandomObjects {
                 case 5:
                     Float randomFloat = random.nextFloat();
                     originalValues.add(randomFloat);
-                    if (xContentType == XContentType.CBOR) {
-                        //with CBOR we get back a float
+                    if (xContentType == XContentType.CBOR || xContentType == XContentType.SMILE) {
+                        //with CBOR and SMILE we get back a float
                         expectedParsedValues.add(randomFloat);
-                    } else if (xContentType == XContentType.SMILE) {
-                        //with SMILE we get back a double
-                        expectedParsedValues.add(randomFloat.doubleValue());
                     } else {
                         //with JSON AND YAML we get back a double, but with float precision.
                         expectedParsedValues.add(Double.parseDouble(randomFloat.toString()));

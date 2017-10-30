@@ -32,6 +32,7 @@ import java.util.Map;
 
 import static java.util.Collections.emptyMap;
 import static java.util.Collections.singletonMap;
+import static org.elasticsearch.common.xcontent.XContentParserUtils.ensureExpectedToken;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
@@ -41,6 +42,46 @@ import static org.hamcrest.Matchers.isIn;
 import static org.hamcrest.Matchers.nullValue;
 
 public class XContentParserTests extends ESTestCase {
+
+    public void testFloat() throws IOException {
+        final XContentType xContentType = randomFrom(XContentType.values());
+
+        final String field = randomAlphaOfLengthBetween(1, 5);
+        final Float value = randomFloat();
+
+        try (XContentBuilder builder = XContentBuilder.builder(xContentType.xContent())) {
+            builder.startObject();
+            if (randomBoolean()) {
+                builder.field(field, value);
+            } else {
+                builder.field(field).value(value);
+            }
+            builder.endObject();
+
+            final Number number;
+            try (XContentParser parser = createParser(xContentType.xContent(), builder.bytes())) {
+                assertEquals(XContentParser.Token.START_OBJECT, parser.nextToken());
+                assertEquals(XContentParser.Token.FIELD_NAME, parser.nextToken());
+                assertEquals(field, parser.currentName());
+                assertEquals(XContentParser.Token.VALUE_NUMBER, parser.nextToken());
+
+                number = parser.numberValue();
+
+                ensureExpectedToken(XContentParser.Token.END_OBJECT, parser.nextToken(), parser::getTokenLocation);
+                assertNull(parser.nextToken());
+            }
+
+            assertEquals(value, number.floatValue(), 0.0f);
+
+            if (xContentType == XContentType.JSON || xContentType == XContentType.YAML) {
+                // JSON and YAML parsers return the parsed value as a Double
+                assertTrue(number instanceof Double);
+            } else if (xContentType == XContentType.CBOR || xContentType == XContentType.SMILE) {
+                assertTrue(number instanceof Float);
+            }
+
+        }
+    }
 
     public void testReadList() throws IOException {
         assertThat(readList("{\"foo\": [\"bar\"]}"), contains("bar"));
