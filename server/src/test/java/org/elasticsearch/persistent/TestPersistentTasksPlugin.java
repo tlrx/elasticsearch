@@ -51,6 +51,9 @@ import org.elasticsearch.common.xcontent.ConstructingObjectParser;
 import org.elasticsearch.common.xcontent.NamedXContentRegistry;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentParser;
+import org.elasticsearch.persistent.PersistentTasksCustomMetaData.PersistentTask;
+import org.elasticsearch.persistent.decider.AssignmentDecider;
+import org.elasticsearch.persistent.decider.AssignmentDecision;
 import org.elasticsearch.plugins.ActionPlugin;
 import org.elasticsearch.plugins.PersistentTaskPlugin;
 import org.elasticsearch.plugins.Plugin;
@@ -59,8 +62,6 @@ import org.elasticsearch.tasks.TaskCancelledException;
 import org.elasticsearch.tasks.TaskId;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
-import org.elasticsearch.persistent.PersistentTasksCustomMetaData.Assignment;
-import org.elasticsearch.persistent.PersistentTasksCustomMetaData.PersistentTask;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -286,19 +287,26 @@ public class TestPersistentTasksPlugin extends Plugin implements ActionPlugin, P
         }
 
         @Override
-        public Assignment getAssignment(TestParams params, ClusterState clusterState) {
-            if (params == null || params.getExecutorNodeAttr() == null) {
-                return super.getAssignment(params, clusterState);
-            } else {
-                DiscoveryNode executorNode = selectLeastLoadedNode(clusterState,
-                        discoveryNode -> params.getExecutorNodeAttr().equals(discoveryNode.getAttributes().get("test_attr")));
-                if (executorNode != null) {
-                    return new Assignment(executorNode.getId(), "test assignment");
-                } else {
-                    return NO_NODE_FOUND;
+        public AssignmentDecider<PersistentTaskParams> getTaskAssignmentDecider(final ClusterState currentState) {
+            final AssignmentDecider<PersistentTaskParams> parent = super.getTaskAssignmentDecider(currentState);
+            return new AssignmentDecider<PersistentTaskParams>(settings) {
+                @Override
+                public AssignmentDecision canAssign(String taskName, PersistentTaskParams taskParams) {
+                    return parent.canAssign(taskName, taskParams);
                 }
 
-            }
+                @Override
+                public AssignmentDecision canAssign(String taskName, PersistentTaskParams taskParams, DiscoveryNode node) {
+                    TestParams params = (TestParams) taskParams;
+                    if (params != null && params.getExecutorNodeAttr() != null) {
+                        if (params.getExecutorNodeAttr().equals(node.getAttributes().get("test_attr"))) {
+                            return AssignmentDecision.YES;
+                        }
+                        return AssignmentDecision.NO;
+                    }
+                    return parent.canAssign(taskName, taskParams, node);
+                }
+            };
         }
 
         @Override

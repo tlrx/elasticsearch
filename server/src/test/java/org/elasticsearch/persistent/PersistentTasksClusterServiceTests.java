@@ -19,7 +19,6 @@
 
 package org.elasticsearch.persistent;
 
-import com.carrotsearch.hppc.cursors.ObjectCursor;
 import org.elasticsearch.Version;
 import org.elasticsearch.cluster.ClusterChangedEvent;
 import org.elasticsearch.cluster.ClusterName;
@@ -36,6 +35,8 @@ import org.elasticsearch.persistent.PersistentTasksCustomMetaData.Assignment;
 import org.elasticsearch.persistent.PersistentTasksCustomMetaData.PersistentTask;
 import org.elasticsearch.persistent.TestPersistentTasksPlugin.TestParams;
 import org.elasticsearch.persistent.TestPersistentTasksPlugin.TestPersistentTasksExecutor;
+import org.elasticsearch.persistent.decider.AssignmentDecider;
+import org.elasticsearch.persistent.decider.AssignmentDecision;
 import org.elasticsearch.persistent.decider.EnableAssignmentDecider;
 import org.elasticsearch.tasks.Task;
 import org.elasticsearch.test.ESTestCase;
@@ -47,18 +48,17 @@ import org.junit.AfterClass;
 import org.junit.Before;
 import org.junit.BeforeClass;
 
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
-import java.util.List;
-import java.util.function.BiFunction;
+import java.util.Set;
+import java.util.function.Function;
 
 import static java.util.Collections.emptyMap;
 import static java.util.Collections.singleton;
 import static org.elasticsearch.persistent.PersistentTasksClusterService.needsReassignment;
+import static org.elasticsearch.persistent.PersistentTasksClusterService.newUnassigment;
 import static org.elasticsearch.persistent.PersistentTasksClusterService.persistentTasksChanged;
-import static org.elasticsearch.persistent.PersistentTasksExecutor.NO_NODE_FOUND;
 import static org.elasticsearch.test.ClusterServiceUtils.createClusterService;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.lessThanOrEqualTo;
@@ -95,9 +95,23 @@ public class PersistentTasksClusterServiceTests extends ESTestCase {
     }
 
     public void testReassignmentRequired() {
-        final PersistentTasksClusterService service = createService((params, clusterState) ->
-            "never_assign".equals(((TestParams) params).getTestParam()) ? NO_NODE_FOUND : randomNodeAssignment(clusterState.nodes())
-        );
+        final PersistentTasksClusterService service = createService((currentState) -> {
+            final RandomNodeAssignmentDecider random = new RandomNodeAssignmentDecider(currentState);
+            return new AssignmentDecider<PersistentTaskParams>(Settings.EMPTY) {
+                @Override
+                public AssignmentDecision canAssign(String taskName, PersistentTaskParams taskParams) {
+                    if (taskParams != null && "never_assign".equals(((TestParams) taskParams).getTestParam())) {
+                        return AssignmentDecision.NO;
+                    }
+                    return super.canAssign(taskName, taskParams);
+                }
+
+                @Override
+                public AssignmentDecision canAssign(String taskName, PersistentTaskParams taskParams, DiscoveryNode node) {
+                    return random.canAssign(taskName, taskParams, node);
+                }
+            };
+        });
 
         int numberOfIterations = randomIntBetween(1, 30);
         ClusterState clusterState = initialState();
@@ -160,7 +174,7 @@ public class PersistentTasksClusterServiceTests extends ESTestCase {
 
         final ClusterChangedEvent event = new ClusterChangedEvent("test", current, previous);
 
-        final PersistentTasksClusterService service = createService((params, clusterState) -> randomNodeAssignment(clusterState.nodes()));
+        final PersistentTasksClusterService service = createService(RandomNodeAssignmentDecider::new);
         assertThat(dumpEvent(event), service.shouldReassignPersistentTasks(event), equalTo(changed && unassigned));
     }
 
@@ -197,9 +211,9 @@ public class PersistentTasksClusterServiceTests extends ESTestCase {
                 clusterState.metaData().custom(PersistentTasksCustomMetaData.TYPE));
         DiscoveryNodes.Builder nodes = DiscoveryNodes.builder(clusterState.nodes());
         addTestNodes(nodes, randomIntBetween(1, 10));
-        int numberOfTasks = randomIntBetween(0, 40);
+        int numberOfTasks = 3;//randomIntBetween(0, 40);
         for (int i = 0; i < numberOfTasks; i++) {
-            switch (randomInt(2)) {
+            switch (2) {
                 case 0:
                     // add an unassigned task that should get assigned because it's assigned to a non-existing node or unassigned
                     addTask(tasks, "assign_me", randomBoolean() ? null : "no_longer_exits");
@@ -237,20 +251,22 @@ public class PersistentTasksClusterServiceTests extends ESTestCase {
                     }
                     assertThat("task should be assigned to a node that is in the cluster, was assigned to " + task.getExecutorNode(),
                             clusterState.nodes().nodeExists(task.getExecutorNode()), equalTo(true));
-                    assertThat(task.getAssignment().getExplanation(), equalTo("test assignment"));
+                    assertThat(task.getAssignment().getExplanation(), equalTo("assigned"));
                     break;
                 case "dont_assign_me":
                     assertThat(task.getExecutorNode(), nullValue());
                     assertThat(task.isAssigned(), equalTo(false));
-                    assertThat(task.getAssignment().getExplanation(), equalTo("no appropriate nodes found for the assignment"));
+                    assertThat(task.getAssignment().getExplanation(),
+                        equalTo("persistent task [cluster:admin/persistent/test] cannot be assigned"));
                     break;
                 case "assign_one":
                     if (task.isAssigned()) {
                         assignOneCount++;
                         assertThat("more than one assign_one tasks are assigned", assignOneCount, lessThanOrEqualTo(1));
-                        assertThat(task.getAssignment().getExplanation(), equalTo("test assignment"));
+                        assertThat(task.getAssignment().getExplanation(), equalTo("assigned"));
                     } else {
-                        assertThat(task.getAssignment().getExplanation(), equalTo("only one task can be assigned at a time"));
+                        assertThat(task.getAssignment().getExplanation(), equalTo("persistent task [cluster:admin/persistent/test] " +
+                            "cannot be assigned [only one task can be assigned at a time]"));
                     }
                     break;
                 default:
@@ -376,53 +392,33 @@ public class PersistentTasksClusterServiceTests extends ESTestCase {
     }
 
     private ClusterState reassign(ClusterState clusterState) {
-        PersistentTasksClusterService service = createService((params, currentState) -> {
-            TestParams testParams = (TestParams) params;
-            switch (testParams.getTestParam()) {
-                case "assign_me":
-                    return randomNodeAssignment(currentState.nodes());
-                case "dont_assign_me":
-                    return NO_NODE_FOUND;
-                case "fail_me_if_called":
-                    fail("the decision decider shouldn't be called on this task");
-                    return null;
-                case "assign_one":
-                    return assignOnlyOneTaskAtATime(currentState);
-                default:
-                    fail("unknown param " + testParams.getTestParam());
-            }
-            return NO_NODE_FOUND;
+        PersistentTasksClusterService service = createService((currentState) -> {
+            final RandomNodeAssignmentDecider random = new RandomNodeAssignmentDecider(currentState);
+            final SingleExecutionAssignmentDecider single = new SingleExecutionAssignmentDecider(currentState);
+
+            return new AssignmentDecider<PersistentTaskParams>(Settings.EMPTY) {
+                @Override
+                public AssignmentDecision canAssign(String taskName, PersistentTaskParams taskParams) {
+                    TestParams testParams = (TestParams) taskParams;
+                    switch (testParams.getTestParam()) {
+                        case "dont_assign_me":
+                            return AssignmentDecision.NO;
+                        case "fail_me_if_called":
+                            fail("the decision decider shouldn't be called on this task");
+                            return AssignmentDecision.NO;
+                        case "assign_me":
+                            return AssignmentDecision.YES;
+                        case "assign_one":
+                            return single.canAssign(taskName, taskParams);
+                        default:
+                            fail("unknown param " + testParams.getTestParam());
+                    }
+                    return AssignmentDecision.NO;
+                }
+            };
         });
 
         return service.reassignTasks(clusterState);
-    }
-
-    private Assignment assignOnlyOneTaskAtATime(ClusterState clusterState) {
-        DiscoveryNodes nodes = clusterState.nodes();
-        PersistentTasksCustomMetaData tasksInProgress = clusterState.getMetaData().custom(PersistentTasksCustomMetaData.TYPE);
-        if (tasksInProgress.findTasks(TestPersistentTasksExecutor.NAME, task ->
-                "assign_one".equals(((TestParams) task.getParams()).getTestParam()) &&
-                        nodes.nodeExists(task.getExecutorNode())).isEmpty()) {
-            return randomNodeAssignment(clusterState.nodes());
-        } else {
-            return new Assignment(null, "only one task can be assigned at a time");
-        }
-    }
-
-    private Assignment randomNodeAssignment(DiscoveryNodes nodes) {
-        if (nodes.getNodes().isEmpty()) {
-            return NO_NODE_FOUND;
-        }
-        List<String> nodeList = new ArrayList<>();
-        for (ObjectCursor<String> node : nodes.getNodes().keys()) {
-            nodeList.add(node.value);
-        }
-        String node = randomFrom(nodeList);
-        if (node != null) {
-            return new Assignment(node, "test assignment");
-        } else {
-            return NO_NODE_FOUND;
-        }
     }
 
     private String dumpEvent(ClusterChangedEvent event) {
@@ -514,7 +510,8 @@ public class PersistentTasksClusterServiceTests extends ESTestCase {
                 }
                 if (randomBoolean()) {
                     logger.info("added random unassignable task");
-                    addRandomTask(builder, MetaData.builder(clusterState.metaData()), tasksBuilder, NO_NODE_FOUND, "never_assign");
+                    addRandomTask(builder, MetaData.builder(clusterState.metaData()), tasksBuilder,
+                        newUnassigment(TestPersistentTasksExecutor.NAME, ""), "never_assign");
                     return builder.build();
                 }
                 logger.info("changed routing table");
@@ -639,20 +636,74 @@ public class PersistentTasksClusterServiceTests extends ESTestCase {
         routingTable.addAsNew(indexMetaData);
     }
 
-    /** Creates a PersistentTasksClusterService with a single PersistentTasksExecutor implemented by a BiFunction **/
-    private <P extends PersistentTaskParams> PersistentTasksClusterService createService(final BiFunction<P, ClusterState, Assignment> fn) {
+    /** Creates a PersistentTasksClusterService with a single PersistentTasksExecutor **/
+    private PersistentTasksClusterService createService(final Function<ClusterState, AssignmentDecider<PersistentTaskParams>> fn) {
         PersistentTasksExecutorRegistry registry = new PersistentTasksExecutorRegistry(Settings.EMPTY,
-            singleton(new PersistentTasksExecutor<P>(Settings.EMPTY, TestPersistentTasksExecutor.NAME, null) {
+            singleton(new PersistentTasksExecutor<PersistentTaskParams>(Settings.EMPTY, TestPersistentTasksExecutor.NAME, null) {
                 @Override
-                public Assignment getAssignment(P params, ClusterState clusterState) {
-                    return fn.apply(params, clusterState);
+                public AssignmentDecider<PersistentTaskParams> getTaskAssignmentDecider(ClusterState currentState) {
+                    return fn.apply(currentState);
                 }
 
                 @Override
-                protected void nodeOperation(AllocatedPersistentTask task, P params, Task.Status status) {
+                protected void nodeOperation(AllocatedPersistentTask task, PersistentTaskParams params, Task.Status status) {
                     throw new UnsupportedOperationException();
                 }
             }));
         return new PersistentTasksClusterService(Settings.EMPTY, registry, clusterService);
+    }
+
+    /** An assignment decider that assign tasks to a random node **/
+    private static class RandomNodeAssignmentDecider extends AssignmentDecider<PersistentTaskParams> {
+
+        private final String nodeId;
+
+        RandomNodeAssignmentDecider(final ClusterState clusterState) {
+            super(Settings.EMPTY);
+
+            Set<String> nodes = new HashSet<>();
+            for (DiscoveryNode discoveryNode : clusterState.nodes()) {
+                nodes.add(discoveryNode.getId());
+            }
+            this.nodeId = nodes.isEmpty() == false ? randomFrom(nodes) : null;
+        }
+
+        @Override
+        public AssignmentDecision canAssign(String taskName, PersistentTaskParams taskParams, DiscoveryNode discoveryNode) {
+            if (nodeId != null && nodeId.equals(discoveryNode.getId())) {
+                return AssignmentDecision.YES;
+            }
+            return AssignmentDecision.NO;
+        }
+    }
+
+    /** An assignment decider that prevents more than 1 task to be executed at a time **/
+    private static class SingleExecutionAssignmentDecider extends AssignmentDecider<PersistentTaskParams> {
+
+        private final long numberOfTasks;
+
+        SingleExecutionAssignmentDecider(final ClusterState clusterState) {
+            super(Settings.EMPTY);
+            this.numberOfTasks = numberOfTasks(clusterState.metaData().custom(PersistentTasksCustomMetaData.TYPE), clusterState.nodes());
+        }
+
+        @Override
+        public AssignmentDecision canAssign(String taskName, PersistentTaskParams taskParams) {
+            if (numberOfTasks != 0) {
+                return new AssignmentDecision(AssignmentDecision.Type.NO, "only one task can be assigned at a time");
+            }
+            return AssignmentDecision.YES;
+        }
+
+        private long numberOfTasks(PersistentTasksCustomMetaData tasks, DiscoveryNodes nodes) {
+            if (tasks == null) {
+                return 0;
+            }
+            return tasks.tasks().stream()
+                .filter(t -> TestPersistentTasksExecutor.NAME.equals(t.getTaskName()))
+                .filter(t -> "assign_one".equals(((TestParams) t.getParams()).getTestParam()))
+                .filter(t -> nodes.nodeExists(t.getExecutorNode()))
+                .count();
+        }
     }
 }

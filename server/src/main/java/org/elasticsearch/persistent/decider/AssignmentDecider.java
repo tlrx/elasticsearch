@@ -18,6 +18,7 @@
  */
 package org.elasticsearch.persistent.decider;
 
+import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.component.AbstractComponent;
 import org.elasticsearch.common.settings.Settings;
@@ -42,6 +43,19 @@ public abstract class AssignmentDecider<Params extends PersistentTaskParams> ext
      * @return the {@link AssignmentDecision}
      */
     public AssignmentDecision canAssign(final String taskName, final @Nullable Params taskParams) {
+        return AssignmentDecision.ALWAYS;
+    }
+
+    /**
+     * Returns a {@link AssignmentDecision} whether the given persistent task can be assigned
+     * to the given node of the cluster. The default is {@link AssignmentDecision#ALWAYS}.
+     *
+     * @param taskName   the task's name
+     * @param taskParams the task's parameters
+     * @param node       the node for which the decision must be taken
+     * @return the {@link AssignmentDecision}
+     */
+    public AssignmentDecision canAssign(final String taskName, final @Nullable Params taskParams, final DiscoveryNode node) {
         return AssignmentDecision.ALWAYS;
     }
 }

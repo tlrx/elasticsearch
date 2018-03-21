@@ -24,13 +24,14 @@ import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.component.AbstractComponent;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.persistent.PersistentTasksCustomMetaData.PersistentTask;
+import org.elasticsearch.persistent.decider.AssignmentDecider;
+import org.elasticsearch.persistent.decider.DataNodeAssignmentDecider;
 import org.elasticsearch.tasks.Task;
 import org.elasticsearch.tasks.TaskId;
-import org.elasticsearch.persistent.PersistentTasksCustomMetaData.Assignment;
-import org.elasticsearch.persistent.PersistentTasksCustomMetaData.PersistentTask;
 
+import java.util.List;
 import java.util.Map;
-import java.util.function.Predicate;
 
 /**
  * An executor of tasks that can survive restart of requesting or executing node.
@@ -49,45 +50,6 @@ public abstract class PersistentTasksExecutor<Params extends PersistentTaskParam
 
     public String getTaskName() {
         return taskName;
-    }
-
-    public static final Assignment NO_NODE_FOUND = new Assignment(null, "no appropriate nodes found for the assignment");
-
-    /**
-     * Returns the node id where the params has to be executed,
-     * <p>
-     * The default implementation returns the least loaded data node
-     */
-    public Assignment getAssignment(Params params, ClusterState clusterState) {
-        DiscoveryNode discoveryNode = selectLeastLoadedNode(clusterState, DiscoveryNode::isDataNode);
-        if (discoveryNode == null) {
-            return NO_NODE_FOUND;
-        } else {
-            return new Assignment(discoveryNode.getId(), "");
-        }
-    }
-
-    /**
-     * Finds the least loaded node that satisfies the selector criteria
-     */
-    protected DiscoveryNode selectLeastLoadedNode(ClusterState clusterState, Predicate<DiscoveryNode> selector) {
-        long minLoad = Long.MAX_VALUE;
-        DiscoveryNode minLoadedNode = null;
-        PersistentTasksCustomMetaData persistentTasks = clusterState.getMetaData().custom(PersistentTasksCustomMetaData.TYPE);
-        for (DiscoveryNode node : clusterState.getNodes()) {
-            if (selector.test(node)) {
-                if (persistentTasks == null) {
-                    // We don't have any task running yet, pick the first available node
-                    return node;
-                }
-                long numberOfTasks = persistentTasks.getNumberOfTasksOnNode(node.getId(), taskName);
-                if (minLoad > numberOfTasks) {
-                    minLoad = numberOfTasks;
-                    minLoadedNode = node;
-                }
-            }
-        }
-        return minLoadedNode;
     }
 
     /**
@@ -122,5 +84,41 @@ public abstract class PersistentTasksExecutor<Params extends PersistentTaskParam
 
     public String getExecutor() {
         return executor;
+    }
+
+    /**
+     * Returns the {@link AssignmentDecider} to use when assigning persistent tasks to nodes for execution.
+     *
+     * @param currentState the current {@link ClusterState}
+     * @return a {@link AssignmentDecider}
+     */
+    public AssignmentDecider<PersistentTaskParams> getTaskAssignmentDecider(final ClusterState currentState) {
+        return new DataNodeAssignmentDecider<>(settings);
+    }
+
+    protected DiscoveryNode getAssignedNode(final String taskName, final @Nullable Params taskParams,
+                                            final ClusterState currentState, final List<DiscoveryNode> nodes) {
+        if (nodes.isEmpty()) {
+            return null;
+        }
+
+        final PersistentTasksCustomMetaData persistentTasks = currentState.getMetaData().custom(PersistentTasksCustomMetaData.TYPE);
+
+        Long minLoad = Long.MAX_VALUE;
+        DiscoveryNode minLoadedNode = null;
+        for (DiscoveryNode node : nodes) {
+            if (persistentTasks == null) {
+                // We don't have any task running yet, pick the first available node
+                return node;
+            }
+            long numberOfTasks = persistentTasks.getNumberOfTasksOnNode(node.getId(), taskName);
+            if (numberOfTasks == 0) {
+                return node;
+            } else if (minLoad > numberOfTasks) {
+                minLoad = numberOfTasks;
+                minLoadedNode = node;
+            }
+        }
+        return minLoadedNode;
     }
 }

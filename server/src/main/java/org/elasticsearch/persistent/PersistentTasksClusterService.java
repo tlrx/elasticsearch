@@ -27,6 +27,7 @@ import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.ClusterStateListener;
 import org.elasticsearch.cluster.ClusterStateUpdateTask;
 import org.elasticsearch.cluster.metadata.MetaData;
+import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.node.DiscoveryNodes;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.Nullable;
@@ -35,16 +36,24 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.persistent.PersistentTasksCustomMetaData.Assignment;
 import org.elasticsearch.persistent.PersistentTasksCustomMetaData.PersistentTask;
 import org.elasticsearch.persistent.decider.AssignmentDecider;
+import org.elasticsearch.persistent.decider.AssignmentDeciders;
 import org.elasticsearch.persistent.decider.AssignmentDecision;
 import org.elasticsearch.persistent.decider.EnableAssignmentDecider;
 import org.elasticsearch.tasks.Task;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Objects;
+
+import static java.util.Collections.unmodifiableList;
 
 /**
  * Component that runs only on the master node and is responsible for assigning running tasks to nodes
  */
 public class PersistentTasksClusterService extends AbstractComponent implements ClusterStateListener {
+
+    static final AssignmentDecision NO_NODE_FOUND = new AssignmentDecision(AssignmentDecision.Type.NO, "no appropriate nodes found");
 
     private final ClusterService clusterService;
     private final PersistentTasksExecutorRegistry registry;
@@ -230,12 +239,34 @@ public class PersistentTasksClusterService extends AbstractComponent implements 
                                                                               final ClusterState currentState) {
         PersistentTasksExecutor<Params> persistentTasksExecutor = registry.getPersistentTaskExecutorSafe(taskName);
 
-        AssignmentDecision decision = decider.canAssign(taskName, taskParams);
-        if (decision.getType() == AssignmentDecision.Type.NO) {
-            return new Assignment(null, "persistent task [" + taskName + "] cannot be assigned [" + decision.getReason() + "]");
-        }
+        final AssignmentDecider<PersistentTaskParams> decider =
+            new AssignmentDeciders<>(settings, Arrays.asList(this.decider, persistentTasksExecutor.getTaskAssignmentDecider(currentState)));
 
-        return persistentTasksExecutor.getAssignment(taskParams, currentState);
+        // Check if the persistent task can be assigned
+        AssignmentDecision decision = decider.canAssign(taskName, taskParams);
+        if (decision.getType() == AssignmentDecision.Type.YES) {
+
+            // Build the list of nodes that could execute the persistent task
+            final List<DiscoveryNode> nodes = new ArrayList<>();
+            for (DiscoveryNode node : currentState.nodes()) {
+                decision = decider.canAssign(taskName, taskParams, node);
+                if (decision.getType() == AssignmentDecision.Type.YES) {
+                    nodes.add(node);
+                } else {
+                    logger.debug("persistent task [{}] cannot be assigned to node [{}]: {}", taskName, node, decision.getReason());
+                }
+            }
+
+            // Now let the persistent task executor to choose the node to assign the task to among the list
+            DiscoveryNode node = persistentTasksExecutor.getAssignedNode(taskName, taskParams, currentState, unmodifiableList(nodes));
+            if (node != null && nodes.contains(node)) {
+                logger.debug("persistent task [{}] assigned to node [{}]", taskName, node);
+                return newAssignment(node);
+            } else {
+                decision = NO_NODE_FOUND;
+            }
+        }
+        return newUnassigment(taskName, decision.getReason());
     }
 
     @Override
@@ -331,6 +362,20 @@ public class PersistentTasksClusterService extends AbstractComponent implements 
     /** Returns true if the task is not assigned or is assigned to a non-existing node */
     public static boolean needsReassignment(final Assignment assignment, final DiscoveryNodes nodes) {
         return (assignment.isAssigned() == false || nodes.nodeExists(assignment.getExecutorNode()) == false);
+    }
+
+    /** Creates an {@link Assignment} to the given {@link DiscoveryNode} with a default reason **/
+    public static Assignment newAssignment(final DiscoveryNode node) {
+        return new Assignment(node.getId(), "assigned");
+    }
+
+    /** Creates an unassigned {@link Assignment} with a default reason **/
+    public static Assignment newUnassigment(final String taskName, final String reason) {
+        String message = "persistent task [" + taskName + "] cannot be assigned";
+        if (reason != null && reason.length() > 0) {
+            message += " [" + reason + "]";
+        }
+        return new Assignment(null, message);
     }
 
     private static PersistentTasksCustomMetaData.Builder builder(ClusterState currentState) {

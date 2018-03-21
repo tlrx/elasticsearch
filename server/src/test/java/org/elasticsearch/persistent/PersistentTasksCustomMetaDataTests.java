@@ -49,7 +49,6 @@ import java.util.Collections;
 
 import static org.elasticsearch.cluster.metadata.MetaData.CONTEXT_MODE_GATEWAY;
 import static org.elasticsearch.cluster.metadata.MetaData.CONTEXT_MODE_SNAPSHOT;
-import static org.elasticsearch.persistent.PersistentTasksExecutor.NO_NODE_FOUND;
 
 public class PersistentTasksCustomMetaDataTests extends AbstractDiffableSerializationTestCase<Custom> {
 
@@ -233,11 +232,7 @@ public class PersistentTasksCustomMetaDataTests extends AbstractDiffableSerializ
 
     private Assignment randomAssignment() {
         if (randomBoolean()) {
-            if (randomBoolean()) {
-                return NO_NODE_FOUND;
-            } else {
-                return new Assignment(null, randomAlphaOfLength(10));
-            }
+            return new Assignment(null, randomAlphaOfLength(10));
         }
         return new Assignment(randomAlphaOfLength(10), randomAlphaOfLength(10));
     }
