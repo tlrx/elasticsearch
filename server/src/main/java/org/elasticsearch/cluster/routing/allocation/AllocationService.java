@@ -30,6 +30,7 @@ import org.elasticsearch.cluster.health.ClusterStateHealth;
 import org.elasticsearch.cluster.metadata.AutoExpandReplicas;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.cluster.metadata.MetaData;
+import org.elasticsearch.cluster.routing.RecoverySourceProvider;
 import org.elasticsearch.cluster.routing.RoutingNode;
 import org.elasticsearch.cluster.routing.RoutingNodes;
 import org.elasticsearch.cluster.routing.RoutingTable;
@@ -70,19 +71,24 @@ public class AllocationService {
     private GatewayAllocator gatewayAllocator;
     private final ShardsAllocator shardsAllocator;
     private final ClusterInfoService clusterInfoService;
+    private final RecoverySourceProvider recoverySourceProvider;
 
     public AllocationService(AllocationDeciders allocationDeciders,
                              GatewayAllocator gatewayAllocator,
-                             ShardsAllocator shardsAllocator, ClusterInfoService clusterInfoService) {
-        this(allocationDeciders, shardsAllocator, clusterInfoService);
+                             ShardsAllocator shardsAllocator,
+                             ClusterInfoService clusterInfoService) {
+        this(allocationDeciders, shardsAllocator, clusterInfoService, RecoverySourceProvider.DEFAULT);
         setGatewayAllocator(gatewayAllocator);
     }
 
     public AllocationService(AllocationDeciders allocationDeciders,
-                             ShardsAllocator shardsAllocator, ClusterInfoService clusterInfoService) {
+                             ShardsAllocator shardsAllocator,
+                             ClusterInfoService clusterInfoService,
+                             RecoverySourceProvider recoverySourceProvider) {
         this.allocationDeciders = allocationDeciders;
         this.shardsAllocator = shardsAllocator;
         this.clusterInfoService = clusterInfoService;
+        this.recoverySourceProvider = recoverySourceProvider;
     }
 
     public void setGatewayAllocator(GatewayAllocator gatewayAllocator) {
@@ -455,6 +461,7 @@ public class AllocationService {
 
     private RoutingNodes getMutableRoutingNodes(ClusterState clusterState) {
         RoutingNodes routingNodes = new RoutingNodes(clusterState, false); // this is a costly operation - only call this once!
+        routingNodes.withRecoverySourceProvider(recoverySourceProvider);
         return routingNodes;
     }
 

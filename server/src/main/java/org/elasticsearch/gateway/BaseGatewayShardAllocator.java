@@ -21,6 +21,7 @@ package org.elasticsearch.gateway;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.cluster.routing.RoutingNode;
 import org.elasticsearch.cluster.routing.RoutingNodes;
 import org.elasticsearch.cluster.routing.ShardRouting;
@@ -70,7 +71,8 @@ public abstract class BaseGatewayShardAllocator {
                                       allocation.clusterInfo().getShardSize(shard, ShardRouting.UNAVAILABLE_EXPECTED_SHARD_SIZE),
                     allocation.changes());
             } else {
-                unassignedIterator.removeAndIgnore(allocateUnassignedDecision.getAllocationStatus(), allocation.changes());
+                final IndexMetaData indexMetaData = allocation.metaData().index(shard.index());
+                unassignedIterator.removeAndIgnore(allocateUnassignedDecision.getAllocationStatus(), indexMetaData, allocation.changes());
             }
         }
     }

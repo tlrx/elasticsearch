@@ -840,10 +840,12 @@ public class BalancedShardsAllocator implements ShardsAllocator {
                             }
                         }
 
-                        unassigned.ignoreShard(shard, allocationDecision.getAllocationStatus(), allocation.changes());
+                        AllocationStatus allocationStatus = allocationDecision.getAllocationStatus();
+                        IndexMetaData indexMetaData = allocation.metaData().index(shard.index());
+                        unassigned.ignoreShard(shard, allocationStatus, indexMetaData, allocation.changes());
                         if (!shard.primary()) { // we could not allocate it and we are a replica - check if we can ignore the other replicas
                             while(i < primaryLength-1 && comparator.compare(primary[i], primary[i+1]) == 0) {
-                                unassigned.ignoreShard(primary[++i], allocationDecision.getAllocationStatus(), allocation.changes());
+                                unassigned.ignoreShard(primary[++i], allocationStatus, indexMetaData, allocation.changes());
                             }
                         }
                     }

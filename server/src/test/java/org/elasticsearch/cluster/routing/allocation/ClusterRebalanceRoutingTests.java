@@ -573,7 +573,8 @@ public class ClusterRebalanceRoutingTests extends ESAllocationTestCase {
                     while (iterator.hasNext()) {
                         ShardRouting next = iterator.next();
                         if ("test1".equals(next.index().getName())) {
-                            iterator.removeAndIgnore(UnassignedInfo.AllocationStatus.NO_ATTEMPT, allocation.changes());
+                            IndexMetaData indexMetaData = allocation.metaData().index(next.index());
+                            iterator.removeAndIgnore(UnassignedInfo.AllocationStatus.NO_ATTEMPT, indexMetaData, allocation.changes());
                         }
 
                     }

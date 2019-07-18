@@ -24,6 +24,7 @@ import java.util.Collections;
 import java.util.Map;
 import java.util.function.Supplier;
 
+import org.elasticsearch.cluster.routing.RecoverySourceProvider;
 import org.elasticsearch.cluster.routing.allocation.allocator.ShardsAllocator;
 import org.elasticsearch.cluster.routing.allocation.decider.AllocationDecider;
 import org.elasticsearch.common.settings.ClusterSettings;
@@ -65,4 +66,7 @@ public interface ClusterPlugin {
     default void onNodeStarted() {
     }
 
+    default Collection<RecoverySourceProvider> getRecoverySourceProviders(){
+        return Collections.emptyList();
+    }
 }

@@ -23,6 +23,7 @@ import org.elasticsearch.cluster.action.index.MappingUpdatedAction;
 import org.elasticsearch.cluster.action.index.NodeMappingRefreshAction;
 import org.elasticsearch.cluster.action.shard.ShardStateAction;
 import org.elasticsearch.cluster.metadata.IndexGraveyard;
+import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.cluster.metadata.IndexNameExpressionResolver;
 import org.elasticsearch.cluster.metadata.MetaData;
 import org.elasticsearch.cluster.metadata.MetaDataDeleteIndexService;
@@ -33,6 +34,10 @@ import org.elasticsearch.cluster.metadata.MetaDataMappingService;
 import org.elasticsearch.cluster.metadata.MetaDataUpdateSettingsService;
 import org.elasticsearch.cluster.metadata.RepositoriesMetaData;
 import org.elasticsearch.cluster.routing.DelayedAllocationService;
+import org.elasticsearch.cluster.routing.RecoverySource;
+import org.elasticsearch.cluster.routing.RecoverySourceProvider;
+import org.elasticsearch.cluster.routing.ShardRouting;
+import org.elasticsearch.cluster.routing.UnassignedInfo;
 import org.elasticsearch.cluster.routing.allocation.AllocationService;
 import org.elasticsearch.cluster.routing.allocation.allocator.BalancedShardsAllocator;
 import org.elasticsearch.cluster.routing.allocation.allocator.ShardsAllocator;
@@ -49,7 +54,6 @@ import org.elasticsearch.cluster.routing.allocation.decider.NodeVersionAllocatio
 import org.elasticsearch.cluster.routing.allocation.decider.RebalanceOnlyWhenActiveAllocationDecider;
 import org.elasticsearch.cluster.routing.allocation.decider.ReplicaAfterPrimaryActiveAllocationDecider;
 import org.elasticsearch.cluster.routing.allocation.decider.ResizeAllocationDecider;
-import org.elasticsearch.cluster.routing.allocation.decider.RestoreInProgressAllocationDecider;
 import org.elasticsearch.cluster.routing.allocation.decider.SameShardAllocationDecider;
 import org.elasticsearch.cluster.routing.allocation.decider.ShardsLimitAllocationDecider;
 import org.elasticsearch.cluster.routing.allocation.decider.SnapshotInProgressAllocationDecider;
@@ -81,8 +85,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.function.Function;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 /**
  * Configures classes and services that affect the entire cluster.
@@ -108,7 +114,8 @@ public class ClusterModule extends AbstractModule {
         this.shardsAllocator = createShardsAllocator(settings, clusterService.getClusterSettings(), clusterPlugins);
         this.clusterService = clusterService;
         this.indexNameExpressionResolver = new IndexNameExpressionResolver();
-        this.allocationService = new AllocationService(allocationDeciders, shardsAllocator, clusterInfoService);
+        RecoverySourceProvider recoverySourceProvider = createRecoverySourceProvider(clusterPlugins);
+        this.allocationService = new AllocationService(allocationDeciders, shardsAllocator, clusterInfoService, recoverySourceProvider);
     }
 
     public static List<Entry> getNamedWriteables() {
@@ -181,7 +188,8 @@ public class ClusterModule extends AbstractModule {
         addAllocationDecider(deciders, new EnableAllocationDecider(settings, clusterSettings));
         addAllocationDecider(deciders, new NodeVersionAllocationDecider());
         addAllocationDecider(deciders, new SnapshotInProgressAllocationDecider());
-        addAllocationDecider(deciders, new RestoreInProgressAllocationDecider());
+        // NORELEASE Fix this
+        //addAllocationDecider(deciders, new RestoreInProgressAllocationDecider());
         addAllocationDecider(deciders, new FilterAllocationDecider(settings, clusterSettings));
         addAllocationDecider(deciders, new SameShardAllocationDecider(settings, clusterSettings));
         addAllocationDecider(deciders, new DiskThresholdDecider(settings, clusterSettings));
@@ -222,6 +230,23 @@ public class ClusterModule extends AbstractModule {
         }
         return Objects.requireNonNull(allocatorSupplier.get(),
             "ShardsAllocator factory for [" + allocatorName + "] returned null");
+    }
+
+    private static RecoverySourceProvider createRecoverySourceProvider(final List<ClusterPlugin> clusterPlugins) {
+        final List<RecoverySourceProvider> providers = clusterPlugins.stream()
+            .flatMap(plugin -> plugin.getRecoverySourceProviders().stream())
+            .collect(Collectors.toList());
+
+        return new RecoverySourceProvider() {
+            @Override
+            public Optional<RecoverySource> onNoValidShardCopy(ShardRouting shard, IndexMetaData indexMetaData, UnassignedInfo unassigned) {
+                return providers.stream()
+                    .map(provider -> provider.onNoValidShardCopy(shard, indexMetaData, unassigned))
+                    .filter(Optional::isPresent)
+                    .map(Optional::get)
+                    .findFirst();
+            }
+        };
     }
 
     public AllocationService getAllocationService() {

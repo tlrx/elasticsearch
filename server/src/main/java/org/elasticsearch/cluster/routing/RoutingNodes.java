@@ -47,6 +47,7 @@ import java.util.List;
 import java.util.ListIterator;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.Optional;
 import java.util.Queue;
 import java.util.Set;
 import java.util.function.Predicate;
@@ -82,6 +83,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
 
     private final Map<String, ObjectIntHashMap<String>> nodesPerAttributeNames = new HashMap<>();
     private final Map<String, Recoveries> recoveriesPerNode = new HashMap<>();
+    private RecoverySourceProvider recoverySourceProvider;
 
     public RoutingNodes(ClusterState clusterState) {
         this(clusterState, true);
@@ -797,6 +799,11 @@ public class RoutingNodes implements Iterable<RoutingNode> {
         return nodesToShards.size();
     }
 
+    public void withRecoverySourceProvider(final RecoverySourceProvider recoverySourceProvider) {
+        ensureMutable();
+        this.recoverySourceProvider = recoverySourceProvider;
+    }
+
     public static final class UnassignedShards implements Iterable<ShardRouting>  {
 
         private final RoutingNodes nodes;
@@ -860,10 +867,11 @@ public class RoutingNodes implements Iterable<RoutingNode> {
          * Should be used with caution, typically,
          * the correct usage is to removeAndIgnore from the iterator.
          * @see #ignored()
-         * @see UnassignedIterator#removeAndIgnore(AllocationStatus, RoutingChangesObserver)
+         * @see UnassignedIterator#removeAndIgnore(AllocationStatus, IndexMetaData, RoutingChangesObserver)
          * @see #isIgnoredEmpty()
          */
-        public void ignoreShard(ShardRouting shard, AllocationStatus allocationStatus, RoutingChangesObserver changes) {
+        public void ignoreShard(ShardRouting shard, AllocationStatus allocationStatus,
+                                IndexMetaData indexMetaData,  RoutingChangesObserver changes) {
             nodes.ensureMutable();
             if (shard.primary()) {
                 ignoredPrimaries++;
@@ -874,7 +882,17 @@ public class RoutingNodes implements Iterable<RoutingNode> {
                                                                 currInfo.getNumFailedAllocations(), currInfo.getUnassignedTimeInNanos(),
                                                                 currInfo.getUnassignedTimeInMillis(), currInfo.isDelayed(),
                                                                 allocationStatus);
-                    ShardRouting updatedShard = shard.updateUnassigned(newInfo, shard.recoverySource());
+
+                    RecoverySource shardRecoverySource = shard.recoverySource();
+                    final RecoverySourceProvider recoverySourceProvider = nodes.recoverySourceProvider;
+                    if (recoverySourceProvider != null && allocationStatus == AllocationStatus.NO_VALID_SHARD_COPY) {
+                        Optional<RecoverySource> recoverySource = recoverySourceProvider.onNoValidShardCopy(shard, indexMetaData, newInfo);
+                        if (recoverySource.isPresent()) {
+                            shardRecoverySource = recoverySource.get();
+                        }
+                    }
+
+                    ShardRouting updatedShard = shard.updateUnassigned(newInfo, shardRecoverySource);
                     changes.unassignedInfoUpdated(shard, newInfo);
                     shard = updatedShard;
                 }
@@ -921,10 +939,10 @@ public class RoutingNodes implements Iterable<RoutingNode> {
              *
              * @param attempt the result of the allocation attempt
              */
-            public void removeAndIgnore(AllocationStatus attempt, RoutingChangesObserver changes) {
+            public void removeAndIgnore(AllocationStatus attempt, IndexMetaData indexMetaData, RoutingChangesObserver changes) {
                 nodes.ensureMutable();
                 innerRemove();
-                ignoreShard(current, attempt, changes);
+                ignoreShard(current, attempt, indexMetaData, changes);
             }
 
             private void updateShardRouting(ShardRouting shardRouting) {
@@ -950,7 +968,7 @@ public class RoutingNodes implements Iterable<RoutingNode> {
 
             /**
              * Unsupported operation, just there for the interface. Use
-             * {@link #removeAndIgnore(AllocationStatus, RoutingChangesObserver)} or
+             * {@link #removeAndIgnore(AllocationStatus, IndexMetaData, RoutingChangesObserver)} or
              * {@link #initialize(String, String, long, RoutingChangesObserver)}.
              */
             @Override
@@ -976,8 +994,8 @@ public class RoutingNodes implements Iterable<RoutingNode> {
 
         /**
          * Returns <code>true</code> iff any unassigned shards are marked as temporarily ignored.
-         * @see UnassignedShards#ignoreShard(ShardRouting, AllocationStatus, RoutingChangesObserver)
-         * @see UnassignedIterator#removeAndIgnore(AllocationStatus, RoutingChangesObserver)
+         * @see UnassignedShards#ignoreShard(ShardRouting, AllocationStatus, IndexMetaData, RoutingChangesObserver)
+         * @see UnassignedIterator#removeAndIgnore(AllocationStatus, IndexMetaData, RoutingChangesObserver)
          */
         public boolean isIgnoredEmpty() {
             return ignored.isEmpty();
