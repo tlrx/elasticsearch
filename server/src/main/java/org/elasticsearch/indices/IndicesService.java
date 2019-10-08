@@ -187,6 +187,7 @@ public class IndicesService extends AbstractLifecycleComponent
     private final BigArrays bigArrays;
     private final ScriptService scriptService;
     private final ClusterService clusterService;
+    private final RepositoriesService repositoriesService;
     private final Client client;
     private volatile Map<String, IndexService> indices = emptyMap();
     private final Map<Index, List<PendingDelete>> pendingDeletes = new HashMap<>();
@@ -216,7 +217,8 @@ public class IndicesService extends AbstractLifecycleComponent
                           IndexScopedSettings indexScopedSettings, CircuitBreakerService circuitBreakerService, BigArrays bigArrays,
                           ScriptService scriptService, ClusterService clusterService, Client client, MetaStateService metaStateService,
                           Collection<Function<IndexSettings, Optional<EngineFactory>>> engineFactoryProviders,
-                          Map<String, IndexStorePlugin.DirectoryFactory> directoryFactories) {
+                          Map<String, IndexStorePlugin.DirectoryFactory> directoryFactories,
+                          RepositoriesService repositoriesService) {
         this.settings = settings;
         this.threadPool = threadPool;
         this.pluginsService = pluginsService;
@@ -237,6 +239,7 @@ public class IndicesService extends AbstractLifecycleComponent
         this.bigArrays = bigArrays;
         this.scriptService = scriptService;
         this.clusterService = clusterService;
+        this.repositoriesService = repositoriesService;
         this.client = client;
         this.indicesFieldDataCache = new IndicesFieldDataCache(settings, new IndexFieldDataCache.Listener() {
             @Override
@@ -470,8 +473,8 @@ public class IndicesService extends AbstractLifecycleComponent
      * @throws ResourceAlreadyExistsException if the index already exists.
      */
     @Override
-    public synchronized IndexService createIndex(
-            final IndexMetaData indexMetaData, final List<IndexEventListener> builtInListeners) throws IOException {
+    public synchronized IndexService createIndex(final IndexMetaData indexMetaData,
+                                                 final List<IndexEventListener> builtInListeners) throws IOException {
         ensureChangesAllowed();
         if (indexMetaData.getIndexUUID().equals(IndexMetaData.INDEX_UUID_NA_VALUE)) {
             throw new IllegalArgumentException("index must have a real UUID found value: [" + indexMetaData.getIndexUUID() + "]");
@@ -558,7 +561,8 @@ public class IndicesService extends AbstractLifecycleComponent
                 indicesQueryCache,
                 mapperRegistry,
                 indicesFieldDataCache,
-                namedWriteableRegistry
+                namedWriteableRegistry,
+                repositoriesService
         );
     }
 

@@ -5,6 +5,7 @@
  */
 package org.elasticsearch.xpack.frozen;
 
+import org.apache.lucene.store.Directory;
 import org.elasticsearch.action.ActionRequest;
 import org.elasticsearch.action.ActionResponse;
 import org.elasticsearch.cluster.metadata.IndexNameExpressionResolver;
@@ -18,25 +19,30 @@ import org.elasticsearch.index.IndexModule;
 import org.elasticsearch.index.IndexSettings;
 import org.elasticsearch.index.engine.EngineFactory;
 import org.elasticsearch.index.engine.FrozenEngine;
+import org.elasticsearch.index.shard.ShardPath;
+import org.elasticsearch.repositories.blobstore.BlobStoreDirectory;
 import org.elasticsearch.plugins.ActionPlugin;
 import org.elasticsearch.plugins.EnginePlugin;
+import org.elasticsearch.plugins.IndexStorePlugin;
 import org.elasticsearch.plugins.Plugin;
+import org.elasticsearch.repositories.RepositoriesService;
 import org.elasticsearch.rest.RestController;
 import org.elasticsearch.rest.RestHandler;
 import org.elasticsearch.xpack.core.action.XPackInfoFeatureAction;
 import org.elasticsearch.xpack.core.action.XPackUsageFeatureAction;
 import org.elasticsearch.xpack.core.frozen.action.FreezeIndexAction;
-import org.elasticsearch.xpack.frozen.rest.action.RestFreezeIndexAction;
 import org.elasticsearch.xpack.frozen.action.TransportFreezeIndexAction;
+import org.elasticsearch.xpack.frozen.rest.action.RestFreezeIndexAction;
 
+import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.function.Supplier;
 
-public class FrozenIndices extends Plugin implements ActionPlugin, EnginePlugin {
+public class FrozenIndices extends Plugin implements ActionPlugin, EnginePlugin, IndexStorePlugin {
 
     @Override
     public Optional<EngineFactory> getEngineFactory(IndexSettings indexSettings) {
@@ -49,7 +55,11 @@ public class FrozenIndices extends Plugin implements ActionPlugin, EnginePlugin 
 
     @Override
     public List<Setting<?>> getSettings() {
-        return Arrays.asList(FrozenEngine.INDEX_FROZEN);
+        return List.of(FrozenEngine.INDEX_FROZEN,
+            BlobStoreDirectory.REPOSITORY_NAME,
+            BlobStoreDirectory.REPOSITORY_SNAPSHOT,
+            BlobStoreDirectory.REPOSITORY_INDEX
+            );
     }
 
     @Override
@@ -58,6 +68,22 @@ public class FrozenIndices extends Plugin implements ActionPlugin, EnginePlugin 
             indexModule.addSearchOperationListener(new FrozenEngine.ReacquireEngineSearcherListener());
         }
         super.onIndexModule(indexModule);
+    }
+
+    @Override
+    public Map<String, DirectoryFactory> getDirectoryFactories() {
+        return Map.of("booh", new DirectoryFactory() {
+            @Override
+            public Directory newDirectory(IndexSettings indexSettings, ShardPath shardPath) throws IOException {
+                return newDirectory(indexSettings, shardPath, null);
+            }
+
+            @Override
+            public Directory newDirectory(IndexSettings indexSettings, ShardPath shardPath, RepositoriesService repositories) throws IOException {
+                //assert FrozenEngine.INDEX_FROZEN.get(indexSettings.getSettings());
+                return new BlobStoreDirectory(indexSettings, shardPath, repositories);
+            }
+        });
     }
 
     @Override

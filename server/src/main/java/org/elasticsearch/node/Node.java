@@ -406,6 +406,31 @@ public class Node implements Closeable {
                 .flatMap(Function.identity()).collect(toList()));
             final MetaStateService metaStateService = new MetaStateService(nodeEnvironment, xContentRegistry);
 
+            final ActionModule actionModule = new ActionModule(settings, clusterModule.getIndexNameExpressionResolver(),
+                settingsModule.getIndexScopedSettings(), settingsModule.getClusterSettings(), settingsModule.getSettingsFilter(),
+                threadPool, pluginsService.filterPlugins(ActionPlugin.class), client, circuitBreakerService, usageService, clusterService);
+            modules.add(actionModule);
+
+            final RestController restController = actionModule.getRestController();
+            final NetworkModule networkModule = new NetworkModule(settings, pluginsService.filterPlugins(NetworkPlugin.class),
+                threadPool, bigArrays, pageCacheRecycler, circuitBreakerService, namedWriteableRegistry, xContentRegistry,
+                networkService, restController);
+            Collection<UnaryOperator<Map<String, IndexTemplateMetaData>>> indexTemplateMetaDataUpgraders =
+                pluginsService.filterPlugins(Plugin.class).stream()
+                    .map(Plugin::getIndexTemplateMetaDataUpgrader)
+                    .collect(Collectors.toList());
+            final MetaDataUpgrader metaDataUpgrader = new MetaDataUpgrader(indexTemplateMetaDataUpgraders);
+            final MetaDataIndexUpgradeService metaDataIndexUpgradeService = new MetaDataIndexUpgradeService(settings, xContentRegistry,
+                indicesModule.getMapperRegistry(), settingsModule.getIndexScopedSettings());
+            new TemplateUpgradeService(client, clusterService, threadPool, indexTemplateMetaDataUpgraders);
+            final Transport transport = networkModule.getTransportSupplier().get();
+            final Set<String> taskHeaders = Stream.concat(
+                pluginsService.filterPlugins(ActionPlugin.class).stream().flatMap(p -> p.getTaskHeaders().stream()),
+                Stream.of(Task.X_OPAQUE_ID)
+            ).collect(Collectors.toSet());
+            final TransportService transportService = newTransportService(settings, transport, threadPool,
+                networkModule.getTransportInterceptor(), localNodeFactory, settingsModule.getClusterSettings(), taskHeaders);
+
             // collect engine factory providers from server and from plugins
             final Collection<EnginePlugin> enginePlugins = pluginsService.filterPlugins(EnginePlugin.class);
             final Collection<Function<IndexSettings, Optional<EngineFactory>>> engineFactoryProviders =
@@ -422,11 +447,15 @@ public class Node implements Closeable {
                             .flatMap(m -> m.entrySet().stream())
                             .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
 
+            final RepositoriesModule repositoriesModule = new RepositoriesModule(this.environment,
+                pluginsService.filterPlugins(RepositoryPlugin.class), transportService, clusterService, threadPool, xContentRegistry);
+            final RepositoriesService repositoriesService = repositoriesModule.getRepositoryService();
+
             final IndicesService indicesService =
                 new IndicesService(settings, pluginsService, nodeEnvironment, xContentRegistry, analysisModule.getAnalysisRegistry(),
                     clusterModule.getIndexNameExpressionResolver(), indicesModule.getMapperRegistry(), namedWriteableRegistry,
                     threadPool, settingsModule.getIndexScopedSettings(), circuitBreakerService, bigArrays, scriptModule.getScriptService(),
-                    clusterService, client, metaStateService, engineFactoryProviders, indexStoreFactories);
+                    clusterService, client, metaStateService, engineFactoryProviders, indexStoreFactories, repositoriesService);
 
             final AliasValidator aliasValidator = new AliasValidator();
 
@@ -448,30 +477,8 @@ public class Node implements Closeable {
                                                  namedWriteableRegistry).stream())
                 .collect(Collectors.toList());
 
-            ActionModule actionModule = new ActionModule(settings, clusterModule.getIndexNameExpressionResolver(),
-                settingsModule.getIndexScopedSettings(), settingsModule.getClusterSettings(), settingsModule.getSettingsFilter(),
-                threadPool, pluginsService.filterPlugins(ActionPlugin.class), client, circuitBreakerService, usageService, clusterService);
-            modules.add(actionModule);
 
-            final RestController restController = actionModule.getRestController();
-            final NetworkModule networkModule = new NetworkModule(settings, pluginsService.filterPlugins(NetworkPlugin.class),
-                threadPool, bigArrays, pageCacheRecycler, circuitBreakerService, namedWriteableRegistry, xContentRegistry,
-                networkService, restController);
-            Collection<UnaryOperator<Map<String, IndexTemplateMetaData>>> indexTemplateMetaDataUpgraders =
-                pluginsService.filterPlugins(Plugin.class).stream()
-                    .map(Plugin::getIndexTemplateMetaDataUpgrader)
-                    .collect(Collectors.toList());
-            final MetaDataUpgrader metaDataUpgrader = new MetaDataUpgrader(indexTemplateMetaDataUpgraders);
-            final MetaDataIndexUpgradeService metaDataIndexUpgradeService = new MetaDataIndexUpgradeService(settings, xContentRegistry,
-                indicesModule.getMapperRegistry(), settingsModule.getIndexScopedSettings());
-            new TemplateUpgradeService(client, clusterService, threadPool, indexTemplateMetaDataUpgraders);
-            final Transport transport = networkModule.getTransportSupplier().get();
-            Set<String> taskHeaders = Stream.concat(
-                pluginsService.filterPlugins(ActionPlugin.class).stream().flatMap(p -> p.getTaskHeaders().stream()),
-                Stream.of(Task.X_OPAQUE_ID)
-            ).collect(Collectors.toSet());
-            final TransportService transportService = newTransportService(settings, transport, threadPool,
-                networkModule.getTransportInterceptor(), localNodeFactory, settingsModule.getClusterSettings(), taskHeaders);
+
             final GatewayMetaState gatewayMetaState = new GatewayMetaState();
             final ResponseCollectorService responseCollectorService = new ResponseCollectorService(clusterService);
             final SearchTransportService searchTransportService =  new SearchTransportService(transportService,
@@ -479,15 +486,12 @@ public class Node implements Closeable {
             final HttpServerTransport httpServerTransport = newHttpTransport(networkModule);
 
 
-            RepositoriesModule repositoriesModule = new RepositoriesModule(this.environment,
-                pluginsService.filterPlugins(RepositoryPlugin.class), transportService, clusterService, threadPool, xContentRegistry);
-            RepositoriesService repositoryService = repositoriesModule.getRepositoryService();
             SnapshotsService snapshotsService = new SnapshotsService(settings, clusterService,
-                clusterModule.getIndexNameExpressionResolver(), repositoryService, threadPool);
-            SnapshotShardsService snapshotShardsService = new SnapshotShardsService(settings, clusterService, repositoryService,
+                clusterModule.getIndexNameExpressionResolver(), repositoriesService, threadPool);
+            SnapshotShardsService snapshotShardsService = new SnapshotShardsService(settings, clusterService, repositoriesService,
                 threadPool, transportService, indicesService, actionModule.getActionFilters(),
                 clusterModule.getIndexNameExpressionResolver());
-            RestoreService restoreService = new RestoreService(clusterService, repositoryService, clusterModule.getAllocationService(),
+            RestoreService restoreService = new RestoreService(clusterService, repositoriesService, clusterModule.getAllocationService(),
                 metaDataCreateIndexService, metaDataIndexUpgradeService, clusterService.getClusterSettings());
 
             final RerouteService rerouteService
@@ -569,7 +573,7 @@ public class Node implements Closeable {
                     b.bind(PersistentTasksService.class).toInstance(persistentTasksService);
                     b.bind(PersistentTasksClusterService.class).toInstance(persistentTasksClusterService);
                     b.bind(PersistentTasksExecutorRegistry.class).toInstance(registry);
-                    b.bind(RepositoriesService.class).toInstance(repositoryService);
+                    b.bind(RepositoriesService.class).toInstance(repositoriesService);
                     b.bind(SnapshotsService.class).toInstance(snapshotsService);
                     b.bind(SnapshotShardsService.class).toInstance(snapshotShardsService);
                     b.bind(RestoreService.class).toInstance(restoreService);
