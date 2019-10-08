@@ -58,6 +58,7 @@ import org.elasticsearch.indices.breaker.CircuitBreakerService;
 import org.elasticsearch.indices.fielddata.cache.IndicesFieldDataCache;
 import org.elasticsearch.indices.mapper.MapperRegistry;
 import org.elasticsearch.plugins.IndexStorePlugin;
+import org.elasticsearch.repositories.RepositoriesService;
 import org.elasticsearch.script.ScriptService;
 import org.elasticsearch.threadpool.ThreadPool;
 
@@ -392,7 +393,8 @@ public final class IndexModule {
             IndicesQueryCache indicesQueryCache,
             MapperRegistry mapperRegistry,
             IndicesFieldDataCache indicesFieldDataCache,
-            NamedWriteableRegistry namedWriteableRegistry)
+            NamedWriteableRegistry namedWriteableRegistry,
+            RepositoriesService repositoriesService)
         throws IOException {
         final IndexEventListener eventListener = freeze();
         Function<IndexService, CheckedFunction<DirectoryReader, DirectoryReader, IOException>> readerWrapperFactory =
@@ -414,7 +416,7 @@ public final class IndexModule {
                 new SimilarityService(indexSettings, scriptService, similarities),
                 shardStoreDeleter, analysisRegistry, engineFactory, circuitBreakerService, bigArrays, threadPool, scriptService,
                 clusterService, client, queryCache, directoryFactory, eventListener, readerWrapperFactory, mapperRegistry,
-                indicesFieldDataCache, searchOperationListeners, indexOperationListeners, namedWriteableRegistry);
+                indicesFieldDataCache, searchOperationListeners, indexOperationListeners, namedWriteableRegistry, repositoriesService);
     }
 
     private static IndexStorePlugin.DirectoryFactory getDirectoryFactory(

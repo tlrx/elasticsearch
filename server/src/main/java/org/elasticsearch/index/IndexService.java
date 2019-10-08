@@ -78,6 +78,7 @@ import org.elasticsearch.indices.cluster.IndicesClusterStateService;
 import org.elasticsearch.indices.fielddata.cache.IndicesFieldDataCache;
 import org.elasticsearch.indices.mapper.MapperRegistry;
 import org.elasticsearch.plugins.IndexStorePlugin;
+import org.elasticsearch.repositories.RepositoriesService;
 import org.elasticsearch.script.ScriptService;
 import org.elasticsearch.threadpool.ThreadPool;
 
@@ -136,6 +137,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
     private final BigArrays bigArrays;
     private final ScriptService scriptService;
     private final ClusterService clusterService;
+    private final RepositoriesService repositoriesService;
     private final Client client;
     private final CircuitBreakerService circuitBreakerService;
     private Supplier<Sort> indexSortSupplier;
@@ -163,7 +165,8 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
             IndicesFieldDataCache indicesFieldDataCache,
             List<SearchOperationListener> searchOperationListeners,
             List<IndexingOperationListener> indexingOperationListeners,
-            NamedWriteableRegistry namedWriteableRegistry) throws IOException {
+            NamedWriteableRegistry namedWriteableRegistry,
+            RepositoriesService repositoriesService) throws IOException {
         super(indexSettings);
         this.indexSettings = indexSettings;
         this.xContentRegistry = xContentRegistry;
@@ -205,6 +208,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
         this.threadPool = threadPool;
         this.scriptService = scriptService;
         this.clusterService = clusterService;
+        this.repositoriesService = repositoriesService;
         this.client = client;
         this.eventListener = eventListener;
         this.nodeEnv = nodeEnv;
@@ -409,7 +413,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
                     warmer.warm(reader, shard, IndexService.this.indexSettings);
                 }
             };
-            Directory directory = directoryFactory.newDirectory(this.indexSettings, path);
+            Directory directory = directoryFactory.newDirectory(this.indexSettings, path, repositoriesService);
             store = new Store(shardId, this.indexSettings, directory, lock,
                     new StoreCloseListener(shardId, () -> eventListener.onStoreClosed(shardId)));
             eventListener.onStoreCreated(shardId);

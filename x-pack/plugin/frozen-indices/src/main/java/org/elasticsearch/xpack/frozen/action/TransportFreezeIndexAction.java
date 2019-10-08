@@ -34,14 +34,17 @@ import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.index.Index;
+import org.elasticsearch.index.IndexModule;
 import org.elasticsearch.index.IndexSettings;
 import org.elasticsearch.index.engine.FrozenEngine;
 import org.elasticsearch.protocol.xpack.frozen.FreezeRequest;
 import org.elasticsearch.protocol.xpack.frozen.FreezeResponse;
+import org.elasticsearch.repositories.blobstore.BlobStoreDirectory;
 import org.elasticsearch.tasks.Task;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
 import org.elasticsearch.xpack.core.frozen.action.FreezeIndexAction;
+import org.elasticsearch.xpack.frozen.FrozenIndices;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -183,9 +186,15 @@ public final class TransportFreezeIndexAction extends
                             .put(IndexSettings.INDEX_SEARCH_THROTTLED.getKey(), request.freeze());
                     if (request.freeze()) {
                         settingsBuilder.put("index.blocks.write", true);
+                        if (meta.getSettings().hasValue(BlobStoreDirectory.REPOSITORY_NAME.getKey())) {
+                            settingsBuilder.put(IndexModule.INDEX_STORE_TYPE_SETTING.getKey(), "booh");
+                        }
                         blocks.addIndexBlock(index.getName(), IndexMetaData.INDEX_WRITE_BLOCK);
                     } else {
                         settingsBuilder.remove("index.blocks.write");
+                        if (meta.getSettings().hasValue(BlobStoreDirectory.REPOSITORY_NAME.getKey())) {
+                            settingsBuilder.remove(IndexModule.INDEX_STORE_TYPE_SETTING.getKey());
+                        }
                         blocks.removeIndexBlock(index.getName(), IndexMetaData.INDEX_WRITE_BLOCK);
                     }
                     imdBuilder.settings(settingsBuilder);

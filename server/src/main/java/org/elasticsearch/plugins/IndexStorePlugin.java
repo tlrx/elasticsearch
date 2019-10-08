@@ -22,6 +22,7 @@ package org.elasticsearch.plugins;
 import org.apache.lucene.store.Directory;
 import org.elasticsearch.index.IndexSettings;
 import org.elasticsearch.index.shard.ShardPath;
+import org.elasticsearch.repositories.RepositoriesService;
 
 import java.io.IOException;
 import java.util.Map;
@@ -44,6 +45,10 @@ public interface IndexStorePlugin {
          * @throws IOException if an IOException occurs while opening the directory
          */
         Directory newDirectory(IndexSettings indexSettings, ShardPath shardPath) throws IOException;
+
+        default Directory newDirectory(IndexSettings indexSettings, ShardPath shardPath, RepositoriesService repositories) throws IOException {
+            return newDirectory(indexSettings, shardPath);
+        }
     }
 
     /**

@@ -21,8 +21,10 @@ package org.elasticsearch.repositories.s3;
 
 import com.amazonaws.AmazonClientException;
 import com.amazonaws.services.s3.model.AbortMultipartUploadRequest;
+import com.amazonaws.services.s3.model.AmazonS3Exception;
 import com.amazonaws.services.s3.model.CompleteMultipartUploadRequest;
 import com.amazonaws.services.s3.model.DeleteObjectsRequest;
+import com.amazonaws.services.s3.model.GetObjectRequest;
 import com.amazonaws.services.s3.model.InitiateMultipartUploadRequest;
 import com.amazonaws.services.s3.model.ListObjectsRequest;
 import com.amazonaws.services.s3.model.MultiObjectDeleteException;
@@ -30,6 +32,7 @@ import com.amazonaws.services.s3.model.ObjectListing;
 import com.amazonaws.services.s3.model.ObjectMetadata;
 import com.amazonaws.services.s3.model.PartETag;
 import com.amazonaws.services.s3.model.PutObjectRequest;
+import com.amazonaws.services.s3.model.S3Object;
 import com.amazonaws.services.s3.model.UploadPartRequest;
 import com.amazonaws.services.s3.model.UploadPartResult;
 import org.apache.lucene.util.SetOnce;
@@ -42,10 +45,13 @@ import org.elasticsearch.common.blobstore.BlobPath;
 import org.elasticsearch.common.blobstore.DeleteResult;
 import org.elasticsearch.common.blobstore.support.AbstractBlobContainer;
 import org.elasticsearch.common.blobstore.support.PlainBlobMetaData;
+import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.collect.Tuple;
+import org.elasticsearch.common.io.Streams;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.NoSuchFileException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -79,6 +85,26 @@ class S3BlobContainer extends AbstractBlobContainer {
     @Override
     public InputStream readBlob(String blobName) throws IOException {
         return new S3RetryingInputStream(blobStore, buildKey(blobName));
+    }
+
+    @Override
+    public byte[] readBlob(String blobName, int off, int len) throws IOException {
+        // Fold this into S3RetryingInputStream
+        final String blobKey = buildKey(blobName);
+        try (AmazonS3Reference clientReference = blobStore.clientReference()) {
+            final GetObjectRequest getObjectRequest = new GetObjectRequest(blobStore.bucket(), blobKey);
+            getObjectRequest.setRange(off, off + len);
+            final S3Object s3Object = SocketAccess.doPrivileged(() -> clientReference.client().getObject(getObjectRequest));
+
+            return BytesReference.toBytes(Streams.readFully(s3Object.getObjectContent()));
+        } catch (final AmazonClientException e) {
+            if (e instanceof AmazonS3Exception) {
+                if (404 == ((AmazonS3Exception) e).getStatusCode()) {
+                    throw new NoSuchFileException("Blob object [" + blobKey + "] not found: " + e.getMessage());
+                }
+            }
+            throw e;
+        }
     }
 
     /**

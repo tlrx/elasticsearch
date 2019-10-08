@@ -49,6 +49,10 @@ public interface BlobContainer {
      */
     InputStream readBlob(String blobName) throws IOException;
 
+    default byte[] readBlob(String blobName, int off, int len) throws IOException {
+        throw new UnsupportedOperationException();
+    }
+
     /**
      * Reads blob content from the input stream and writes it to the container in a new blob with the given name.
      * This method assumes the container does not already contain a blob of the same blobName.  If a blob by the
