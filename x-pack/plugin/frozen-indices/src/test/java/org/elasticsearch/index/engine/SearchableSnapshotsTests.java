@@ -7,6 +7,7 @@ import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import org.apache.lucene.util.IOUtils;
 import org.elasticsearch.action.admin.cluster.snapshots.create.CreateSnapshotResponse;
+import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.common.SuppressForbidden;
 import org.elasticsearch.common.UUIDs;
@@ -17,21 +18,21 @@ import org.elasticsearch.common.network.InetAddresses;
 import org.elasticsearch.common.regex.Regex;
 import org.elasticsearch.common.settings.MockSecureSettings;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.xcontent.XContentType;
-import org.elasticsearch.index.IndexModule;
 import org.elasticsearch.index.IndexService;
+import org.elasticsearch.index.IndexSettings;
+import org.elasticsearch.index.query.QueryBuilders;
 import org.elasticsearch.index.shard.IndexShard;
 import org.elasticsearch.indices.IndicesService;
 import org.elasticsearch.mocksocket.MockHttpServer;
 import org.elasticsearch.plugins.Plugin;
 import org.elasticsearch.protocol.xpack.frozen.FreezeRequest;
-import org.elasticsearch.protocol.xpack.frozen.FreezeResponse;
 import org.elasticsearch.repositories.blobstore.BlobStoreDirectory;
 import org.elasticsearch.repositories.s3.S3RepositoryPlugin;
 import org.elasticsearch.rest.RestStatus;
 import org.elasticsearch.rest.RestUtils;
 import org.elasticsearch.snapshots.SnapshotState;
-import org.elasticsearch.test.BackgroundIndexer;
 import org.elasticsearch.test.ESSingleNodeTestCase;
 import org.elasticsearch.xpack.core.frozen.action.FreezeIndexAction;
 import org.elasticsearch.xpack.frozen.FrozenIndices;
@@ -59,7 +60,6 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAcked;
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertHitCount;
 import static org.hamcrest.Matchers.equalTo;
-import static org.hamcrest.Matchers.in;
 import static org.hamcrest.Matchers.nullValue;
 
 public class SearchableSnapshotsTests extends ESSingleNodeTestCase {
@@ -82,7 +82,7 @@ public class SearchableSnapshotsTests extends ESSingleNodeTestCase {
             .build();
     }
 
-    public void testSnapshotAndRestore() throws Exception {
+    public void testSearchableSnapshot() throws Exception {
         final String repository = "repository";
         assertAcked(client().admin().cluster().preparePutRepository(repository)
             .setType("s3")
@@ -98,24 +98,28 @@ public class SearchableSnapshotsTests extends ESSingleNodeTestCase {
         createIndex(index, Settings.builder()
             .put(IndexMetaData.SETTING_NUMBER_OF_SHARDS, 1)
             .put(IndexMetaData.SETTING_NUMBER_OF_REPLICAS, 0)
+            .put(IndexSettings.INDEX_REFRESH_INTERVAL_SETTING.getKey(), TimeValue.ZERO)
             .build());
 
-        final int nbDocs = randomIntBetween(1, 500);
+        final int nbDocs = randomIntBetween(10, 100);
         for (int i = 0; i < nbDocs; i++) {
             client().prepareIndex().setIndex(index).setSource("{\"field\":" + i + "}", XContentType.JSON).get();
         }
-        assertThat(client().admin().indices().prepareFlush(index).get().getFailedShards(), equalTo(0));
-        assertThat(client().admin().indices().prepareForceMerge(index).get().getFailedShards(), equalTo(0));
+        assertThat(client().admin().indices().prepareForceMerge(index).setFlush(true).get().getFailedShards(), equalTo(0));
         assertThat(client().admin().indices().prepareRefresh(index).get().getFailedShards(), equalTo(0));
         assertHitCount(client().prepareSearch(index).setSize(0).get(), nbDocs);
 
         final String snapshot = "snapshot";
         CreateSnapshotResponse createSnapshotResponse = client().admin().cluster().prepareCreateSnapshot(repository, snapshot)
             .setWaitForCompletion(true).setIndices(index).get();
-
         assertThat(createSnapshotResponse.getSnapshotInfo().state(), equalTo(SnapshotState.SUCCESS));
-        assertAcked(client().admin().indices().prepareClose(index));
 
+        // This is how we transition from existing index to glacial index:
+        // - close the index
+        // - add searchable snapshot index settings
+        // - delete existing segments files on disk
+        // - freeze the index
+        assertAcked(client().admin().indices().prepareClose(index));
         assertAcked(client().admin().indices().prepareUpdateSettings(index).setSettings(Settings.builder()
             .put(BlobStoreDirectory.REPOSITORY_NAME.getKey(), repository)
             .put(BlobStoreDirectory.REPOSITORY_SNAPSHOT.getKey(), snapshot)
@@ -132,12 +136,22 @@ public class SearchableSnapshotsTests extends ESSingleNodeTestCase {
         }
 
         assertAcked(client().execute(FreezeIndexAction.INSTANCE, new FreezeRequest(index)).actionGet());
-        ensureGreen(index);
+        ensureGreen(TimeValue.timeValueSeconds(60), index);
 
-        assertHitCount(client().prepareSearch(index).setSize(0).get(), nbDocs);
-        assertHitCount(client().prepareSearch(index).setSize(0).get(), nbDocs);
+        assertHitCount(client().prepareSearch(index).setIndicesOptions(IndicesOptions.LENIENT_EXPAND_OPEN).setSize(0).get(), nbDocs);
+
+        assertHitCount(client().prepareSearch(index)
+            .setIndicesOptions(IndicesOptions.LENIENT_EXPAND_OPEN)
+            .setQuery(QueryBuilders.termQuery("field", 5))
+            .setSize(0).get(), 1);
+
+        assertHitCount(client().prepareSearch(index)
+            .setIndicesOptions(IndicesOptions.LENIENT_EXPAND_OPEN)
+            .setQuery(QueryBuilders.rangeQuery("field").lt(nbDocs / 2))
+            .setSize(0).get(), nbDocs / 2);
+
+        assertHitCount(client().prepareSearch(index).setIndicesOptions(IndicesOptions.LENIENT_EXPAND_OPEN).setSize(0).get(), nbDocs);
     }
-
 
     private static HttpServer httpServer;
 
