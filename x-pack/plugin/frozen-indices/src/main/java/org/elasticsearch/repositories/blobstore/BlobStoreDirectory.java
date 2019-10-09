@@ -30,6 +30,8 @@ import java.util.stream.Collectors;
 
 public class BlobStoreDirectory extends BaseDirectory {
 
+    // associate a snapshot name & index name but we could pin a specific snapshot too
+    // if we don't use restore to bootstrap the index then we need to check the number of shards is correct
     public static Setting<String> REPOSITORY_NAME = Setting.simpleString("index.glacial.repository", Setting.Property.IndexScope);
     public static Setting<String> REPOSITORY_SNAPSHOT = Setting.simpleString("index.glacial.snapshot", Setting.Property.IndexScope);
     public static Setting<String> REPOSITORY_INDEX = Setting.simpleString("index.glacial.index", Setting.Property.IndexScope);
@@ -107,80 +109,32 @@ public class BlobStoreDirectory extends BaseDirectory {
 
     @Override
     public IndexOutput createOutput(String name, IOContext context) throws IOException {
-        return new IndexOutput(name, name){
-
-            @Override
-            public void writeByte(byte b) throws IOException {
-
-            }
-
-            @Override
-            public void writeBytes(byte[] b, int offset, int length) throws IOException {
-
-            }
-
-            @Override
-            public void close() throws IOException {
-
-            }
-
-            @Override
-            public long getFilePointer() {
-                return 0;
-            }
-
-            @Override
-            public long getChecksum() throws IOException {
-                return 0;
-            }
-        };
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public IndexOutput createTempOutput(String prefix, String suffix, IOContext context) throws IOException {
-        return new IndexOutput(prefix, prefix){
-
-            @Override
-            public void writeByte(byte b) throws IOException {
-
-            }
-
-            @Override
-            public void writeBytes(byte[] b, int offset, int length) throws IOException {
-
-            }
-
-            @Override
-            public void close() throws IOException {
-
-            }
-
-            @Override
-            public long getFilePointer() {
-                return 0;
-            }
-
-            @Override
-            public long getChecksum() throws IOException {
-                return 0;
-            }
-        };
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void rename(String source, String dest) throws IOException {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void sync(Collection<String> names) throws IOException {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void syncMetaData() throws IOException {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void deleteFile(String name) throws IOException {
+        throw new UnsupportedOperationException();
     }
 
     @Override

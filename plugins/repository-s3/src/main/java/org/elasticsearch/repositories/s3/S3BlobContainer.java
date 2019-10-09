@@ -88,12 +88,12 @@ class S3BlobContainer extends AbstractBlobContainer {
     }
 
     @Override
-    public byte[] readBlob(String blobName, int off, int len) throws IOException {
+    public byte[] readBlob(final String blobName, final int offset, final int length) throws IOException {
         // Fold this into S3RetryingInputStream
         final String blobKey = buildKey(blobName);
         try (AmazonS3Reference clientReference = blobStore.clientReference()) {
             final GetObjectRequest getObjectRequest = new GetObjectRequest(blobStore.bucket(), blobKey);
-            getObjectRequest.setRange(off, off + len);
+            getObjectRequest.setRange(offset, Math.max(1, offset + length - 1));
             final S3Object s3Object = SocketAccess.doPrivileged(() -> clientReference.client().getObject(getObjectRequest));
 
             return BytesReference.toBytes(Streams.readFully(s3Object.getObjectContent()));
