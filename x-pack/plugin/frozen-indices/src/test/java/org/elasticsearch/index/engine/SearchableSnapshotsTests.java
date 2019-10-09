@@ -50,6 +50,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -114,11 +115,14 @@ public class SearchableSnapshotsTests extends ESSingleNodeTestCase {
             .setWaitForCompletion(true).setIndices(index).get();
         assertThat(createSnapshotResponse.getSnapshotInfo().state(), equalTo(SnapshotState.SUCCESS));
 
-        // This is how we transition from existing index to glacial index:
+        // This is how this test transits from existing index to glacial index:
         // - close the index
         // - add searchable snapshot index settings
         // - delete existing segments files on disk
-        // - freeze the index
+        // - freeze the index (so that it recovers from existing store)
+        //
+        // we might want to use restore to do this, but as of today we can only restore open indices
+        // and that require to bootstrap a new translog history + write commit
         assertAcked(client().admin().indices().prepareClose(index));
         assertAcked(client().admin().indices().prepareUpdateSettings(index).setSettings(Settings.builder()
             .put(BlobStoreDirectory.REPOSITORY_NAME.getKey(), repository)
@@ -287,11 +291,14 @@ public class SearchableSnapshotsTests extends ESSingleNodeTestCase {
                             assertTrue(matcher.matches());
 
                             final int start = Integer.parseInt(matcher.group(1));
-                            final int length = Integer.parseInt(matcher.group(2)) - start + 1;
+                            final int end = Integer.parseInt(matcher.group(2));
+                            final int length = end - start + 1;
 
                             exchange.getResponseHeaders().add("Content-Type", "application/octet-stream");
+                            exchange.getResponseHeaders().add("Content-Range",
+                                String.format(Locale.ROOT, "bytes=%d-%d/%d", start, end, blob.length()));
                             exchange.sendResponseHeaders(RestStatus.OK.getStatus(), length);
-                            exchange.getResponseBody().write(blob.toBytesRef().bytes, start, length);
+                            exchange.getResponseBody().write(BytesReference.toBytes(blob), start, length);
                         }
                     } else {
                         exchange.sendResponseHeaders(RestStatus.NOT_FOUND.getStatus(), -1);
