@@ -45,15 +45,6 @@ public class BlobStoreIndexInput extends BufferedIndexInput {
             readBytes += lengthPart;
         }
         assert readBytes == length;
-
-/*
-        if (fileInfo.numberOfParts() == 1) {
-            assert getFilePointer() + offset <= length();
-            byte[] bytes = container.readBlob(fileInfo.partName(0), Math.toIntExact(getFilePointer() + offset), length); // repository must not be compressed
-            System.arraycopy(bytes, 0, b, 0, length);
-        }
-
- */
     }
 
     @Override
