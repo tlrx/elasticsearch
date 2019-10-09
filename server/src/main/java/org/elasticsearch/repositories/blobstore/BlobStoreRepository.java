@@ -731,7 +731,7 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
         return shardContainer(indexId, shardId.getId());
     }
 
-    BlobContainer shardContainer(IndexId indexId, int shardId) {
+    public BlobContainer shardContainer(IndexId indexId, int shardId) {
         return blobStore().blobContainer(indicesPath().add(indexId.getId()).add(Integer.toString(shardId)));
     }
 
@@ -1287,7 +1287,7 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
     /**
      * Loads information about shard snapshot
      */
-    BlobStoreIndexShardSnapshot loadShardSnapshot(BlobContainer shardContainer, SnapshotId snapshotId) {
+    public BlobStoreIndexShardSnapshot loadShardSnapshot(BlobContainer shardContainer, SnapshotId snapshotId) {
         try {
             return indexShardSnapshotFormat.read(shardContainer, snapshotId.getUUID());
         } catch (NoSuchFileException ex) {
