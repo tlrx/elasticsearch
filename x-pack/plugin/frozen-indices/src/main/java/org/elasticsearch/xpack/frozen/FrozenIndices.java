@@ -72,7 +72,7 @@ public class FrozenIndices extends Plugin implements ActionPlugin, EnginePlugin,
 
     @Override
     public Map<String, DirectoryFactory> getDirectoryFactories() {
-        return Map.of("booh", new DirectoryFactory() {
+        return Map.of("searchable_snapshot", new DirectoryFactory() {
             @Override
             public Directory newDirectory(IndexSettings indexSettings, ShardPath shardPath) throws IOException {
                 return newDirectory(indexSettings, shardPath, null);

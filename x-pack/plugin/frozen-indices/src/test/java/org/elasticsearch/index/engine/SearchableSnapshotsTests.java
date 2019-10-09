@@ -7,6 +7,7 @@ import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import org.apache.lucene.util.IOUtils;
 import org.elasticsearch.action.admin.cluster.snapshots.create.CreateSnapshotResponse;
+import org.elasticsearch.action.admin.indices.settings.get.GetSettingsResponse;
 import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.common.SuppressForbidden;
@@ -22,6 +23,7 @@ import org.elasticsearch.common.unit.ByteSizeUnit;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.xcontent.XContentType;
+import org.elasticsearch.index.IndexModule;
 import org.elasticsearch.index.IndexService;
 import org.elasticsearch.index.IndexSettings;
 import org.elasticsearch.index.query.QueryBuilders;
@@ -87,9 +89,24 @@ public class SearchableSnapshotsTests extends ESSingleNodeTestCase {
     }
 
     public void testSearchableSnapshot() throws Exception {
-        final String repository = "repository";
+        final String index = "test";
+        createIndex(index, Settings.builder()
+            .put(IndexMetaData.SETTING_NUMBER_OF_SHARDS, 1)
+            .put(IndexMetaData.SETTING_NUMBER_OF_REPLICAS, 0)
+            .put(IndexSettings.INDEX_REFRESH_INTERVAL_SETTING.getKey(), TimeValue.ZERO)
+            .build());
 
+        final int nbDocs = scaledRandomIntBetween(100, 30_000);
+        for (int i = 0; i < nbDocs; i++) {
+            client().prepareIndex().setIndex(index).setSource("{\"field\":" + i + "}", XContentType.JSON).get();
+        }
+        assertThat(client().admin().indices().prepareForceMerge(index).setFlush(true).get().getFailedShards(), equalTo(0));
+        assertThat(client().admin().indices().prepareRefresh(index).get().getFailedShards(), equalTo(0));
+        assertHitCount(client().prepareSearch(index).setSize(0).setTrackTotalHits(true).get(), nbDocs);
+
+        final String repository = "repository";
         if (randomBoolean()) {
+            logger.info("creating s3 repository {}", repository);
             assertAcked(client().admin().cluster().preparePutRepository(repository)
                 .setType("s3")
                 .setVerify(randomBoolean())
@@ -100,6 +117,7 @@ public class SearchableSnapshotsTests extends ESSingleNodeTestCase {
                     .put("disable_chunked_encoding", true)
                     .build()));
         } else {
+            logger.info("creating fs repository {}", repository);
             final Settings.Builder settings = Settings.builder();
             settings.put("compress", randomBoolean());
             settings.put("location", ESIntegTestCase.randomRepoPath(node().settings()));
@@ -113,25 +131,9 @@ public class SearchableSnapshotsTests extends ESSingleNodeTestCase {
                 .setSettings(settings));
         }
 
-        final String index = "test";
-        createIndex(index, Settings.builder()
-            .put(IndexMetaData.SETTING_NUMBER_OF_SHARDS, 1)
-            .put(IndexMetaData.SETTING_NUMBER_OF_REPLICAS, 0)
-            .put(IndexSettings.INDEX_REFRESH_INTERVAL_SETTING.getKey(), TimeValue.ZERO)
-            .build());
-
-        final int nbDocs = randomIntBetween(10, 30_000);
-        for (int i = 0; i < nbDocs; i++) {
-            client().prepareIndex().setIndex(index).setSource("{\"field\":" + i + "}", XContentType.JSON).get();
-        }
-        assertThat(client().admin().indices().prepareForceMerge(index).setFlush(true).get().getFailedShards(), equalTo(0));
-        assertThat(client().admin().indices().prepareRefresh(index).get().getFailedShards(), equalTo(0));
-        assertHitCount(client().prepareSearch(index).setSize(0).setTrackTotalHits(true).get(), nbDocs);
-
         final String snapshot = "snapshot";
-        CreateSnapshotResponse createSnapshotResponse = client().admin().cluster().prepareCreateSnapshot(repository, snapshot)
-            .setWaitForCompletion(true).setIndices(index).get();
-        assertThat(createSnapshotResponse.getSnapshotInfo().state(), equalTo(SnapshotState.SUCCESS));
+        assertThat(client().admin().cluster().prepareCreateSnapshot(repository, snapshot).setIndices(index).setWaitForCompletion(true)
+            .get().getSnapshotInfo().state(), equalTo(SnapshotState.SUCCESS));
 
         // This is how this test transits from existing index to glacial index:
         // - close the index
@@ -146,6 +148,7 @@ public class SearchableSnapshotsTests extends ESSingleNodeTestCase {
             .put(BlobStoreDirectory.REPOSITORY_NAME.getKey(), repository)
             .put(BlobStoreDirectory.REPOSITORY_SNAPSHOT.getKey(), snapshot)
             .put(BlobStoreDirectory.REPOSITORY_INDEX.getKey(), index)
+            .put(IndexModule.INDEX_STORE_TYPE_SETTING.getKey(), "searchable_snapshot")
             .build()
         ));
 
@@ -157,8 +160,9 @@ public class SearchableSnapshotsTests extends ESSingleNodeTestCase {
             }
         }
 
+        logger.info("freezing index with {} docs", nbDocs);
         assertAcked(client().execute(FreezeIndexAction.INSTANCE, new FreezeRequest(index)).actionGet());
-        ensureGreen(TimeValue.timeValueSeconds(60), index);
+        ensureGreen(index);
 
         assertHitCount(client().prepareSearch(index)
             .setIndicesOptions(IndicesOptions.LENIENT_EXPAND_OPEN)
@@ -181,6 +185,12 @@ public class SearchableSnapshotsTests extends ESSingleNodeTestCase {
             .setIndicesOptions(IndicesOptions.LENIENT_EXPAND_OPEN)
             .setTrackTotalHits(true)
             .setSize(0).get(), nbDocs);
+
+        GetSettingsResponse getSettingsResponse = client().admin().indices().prepareGetSettings(index).get();
+        assertThat(getSettingsResponse.getSetting(index, BlobStoreDirectory.REPOSITORY_NAME.getKey()), equalTo(repository));
+        assertThat(getSettingsResponse.getSetting(index, BlobStoreDirectory.REPOSITORY_SNAPSHOT.getKey()), equalTo(snapshot));
+        assertThat(getSettingsResponse.getSetting(index, BlobStoreDirectory.REPOSITORY_INDEX.getKey()), equalTo(index));
+        assertThat(getSettingsResponse.getSetting(index, FrozenEngine.INDEX_FROZEN.getKey()), equalTo("true"));
     }
 
     private static HttpServer httpServer;
