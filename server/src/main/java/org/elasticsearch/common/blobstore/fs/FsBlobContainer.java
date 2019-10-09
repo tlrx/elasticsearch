@@ -158,6 +158,16 @@ public class FsBlobContainer extends AbstractBlobContainer {
     }
 
     @Override
+    public byte[] readBlob(final String name, final int offset, final int length) throws IOException {
+        try (InputStream inputStream = readBlob(name)){
+            inputStream.skip(offset);
+            return inputStream.readNBytes(length);
+        } catch (FileNotFoundException fnfe) {
+            throw new NoSuchFileException("[" + name + "] blob not found");
+        }
+    }
+
+    @Override
     public void writeBlob(String blobName, InputStream inputStream, long blobSize, boolean failIfAlreadyExists) throws IOException {
         if (failIfAlreadyExists == false) {
             deleteBlobIgnoringIfNotExists(blobName);

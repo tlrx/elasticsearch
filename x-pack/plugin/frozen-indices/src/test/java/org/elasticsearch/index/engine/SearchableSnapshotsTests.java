@@ -18,6 +18,8 @@ import org.elasticsearch.common.network.InetAddresses;
 import org.elasticsearch.common.regex.Regex;
 import org.elasticsearch.common.settings.MockSecureSettings;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.unit.ByteSizeUnit;
+import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.xcontent.XContentType;
 import org.elasticsearch.index.IndexService;
@@ -33,6 +35,7 @@ import org.elasticsearch.repositories.s3.S3RepositoryPlugin;
 import org.elasticsearch.rest.RestStatus;
 import org.elasticsearch.rest.RestUtils;
 import org.elasticsearch.snapshots.SnapshotState;
+import org.elasticsearch.test.ESIntegTestCase;
 import org.elasticsearch.test.ESSingleNodeTestCase;
 import org.elasticsearch.xpack.core.frozen.action.FreezeIndexAction;
 import org.elasticsearch.xpack.frozen.FrozenIndices;
@@ -85,15 +88,30 @@ public class SearchableSnapshotsTests extends ESSingleNodeTestCase {
 
     public void testSearchableSnapshot() throws Exception {
         final String repository = "repository";
-        assertAcked(client().admin().cluster().preparePutRepository(repository)
-            .setType("s3")
-            .setVerify(randomBoolean())
-            .setSettings(Settings.builder()
-                .put("compress", false)
-                .put("bucket", "bucket")
-                .put("client", "test")
-                .put("disable_chunked_encoding", true)
-                .build()));
+
+        if (randomBoolean()) {
+            assertAcked(client().admin().cluster().preparePutRepository(repository)
+                .setType("s3")
+                .setVerify(randomBoolean())
+                .setSettings(Settings.builder()
+                    .put("compress", randomBoolean())
+                    .put("bucket", "bucket")
+                    .put("client", "test")
+                    .put("disable_chunked_encoding", true)
+                    .build()));
+        } else {
+            final Settings.Builder settings = Settings.builder();
+            settings.put("compress", randomBoolean());
+            settings.put("location", ESIntegTestCase.randomRepoPath(node().settings()));
+            if (randomBoolean()) {
+                long size = 1 << randomInt(10);
+                settings.put("chunk_size", new ByteSizeValue(size, ByteSizeUnit.KB));
+            }
+            assertAcked(client().admin().cluster().preparePutRepository(repository)
+                .setType("fs")
+                .setVerify(randomBoolean())
+                .setSettings(settings));
+        }
 
         final String index = "test";
         createIndex(index, Settings.builder()
@@ -102,13 +120,13 @@ public class SearchableSnapshotsTests extends ESSingleNodeTestCase {
             .put(IndexSettings.INDEX_REFRESH_INTERVAL_SETTING.getKey(), TimeValue.ZERO)
             .build());
 
-        final int nbDocs = randomIntBetween(10, 100);
+        final int nbDocs = randomIntBetween(10, 30_000);
         for (int i = 0; i < nbDocs; i++) {
             client().prepareIndex().setIndex(index).setSource("{\"field\":" + i + "}", XContentType.JSON).get();
         }
         assertThat(client().admin().indices().prepareForceMerge(index).setFlush(true).get().getFailedShards(), equalTo(0));
         assertThat(client().admin().indices().prepareRefresh(index).get().getFailedShards(), equalTo(0));
-        assertHitCount(client().prepareSearch(index).setSize(0).get(), nbDocs);
+        assertHitCount(client().prepareSearch(index).setSize(0).setTrackTotalHits(true).get(), nbDocs);
 
         final String snapshot = "snapshot";
         CreateSnapshotResponse createSnapshotResponse = client().admin().cluster().prepareCreateSnapshot(repository, snapshot)
@@ -142,19 +160,27 @@ public class SearchableSnapshotsTests extends ESSingleNodeTestCase {
         assertAcked(client().execute(FreezeIndexAction.INSTANCE, new FreezeRequest(index)).actionGet());
         ensureGreen(TimeValue.timeValueSeconds(60), index);
 
-        assertHitCount(client().prepareSearch(index).setIndicesOptions(IndicesOptions.LENIENT_EXPAND_OPEN).setSize(0).get(), nbDocs);
+        assertHitCount(client().prepareSearch(index)
+            .setIndicesOptions(IndicesOptions.LENIENT_EXPAND_OPEN)
+            .setTrackTotalHits(true)
+            .setSize(0).get(), nbDocs);
 
         assertHitCount(client().prepareSearch(index)
             .setIndicesOptions(IndicesOptions.LENIENT_EXPAND_OPEN)
             .setQuery(QueryBuilders.termQuery("field", 5))
+            .setTrackTotalHits(true)
             .setSize(0).get(), 1);
 
         assertHitCount(client().prepareSearch(index)
             .setIndicesOptions(IndicesOptions.LENIENT_EXPAND_OPEN)
             .setQuery(QueryBuilders.rangeQuery("field").lt(nbDocs / 2))
-            .setSize(0).get(), nbDocs / 2);
+            .setTrackTotalHits(true)
+            .setSize(10).get(), nbDocs / 2);
 
-        assertHitCount(client().prepareSearch(index).setIndicesOptions(IndicesOptions.LENIENT_EXPAND_OPEN).setSize(0).get(), nbDocs);
+        assertHitCount(client().prepareSearch(index)
+            .setIndicesOptions(IndicesOptions.LENIENT_EXPAND_OPEN)
+            .setTrackTotalHits(true)
+            .setSize(0).get(), nbDocs);
     }
 
     private static HttpServer httpServer;
