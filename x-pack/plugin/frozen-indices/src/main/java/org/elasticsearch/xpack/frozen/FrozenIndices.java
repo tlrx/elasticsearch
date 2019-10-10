@@ -44,6 +44,8 @@ import java.util.function.Supplier;
 
 public class FrozenIndices extends Plugin implements ActionPlugin, EnginePlugin, IndexStorePlugin {
 
+    public static final String SEARCHABLE_SNAPSHOT_STORE = "searchable_snapshot";
+
     @Override
     public Optional<EngineFactory> getEngineFactory(IndexSettings indexSettings) {
         if (indexSettings.getValue(FrozenEngine.INDEX_FROZEN)) {
@@ -58,7 +60,8 @@ public class FrozenIndices extends Plugin implements ActionPlugin, EnginePlugin,
         return List.of(FrozenEngine.INDEX_FROZEN,
             BlobStoreDirectory.REPOSITORY_NAME,
             BlobStoreDirectory.REPOSITORY_SNAPSHOT,
-            BlobStoreDirectory.REPOSITORY_INDEX
+            BlobStoreDirectory.REPOSITORY_INDEX,
+            BlobStoreDirectory.REPOSITORY_BUFFER
             );
     }
 
@@ -72,7 +75,7 @@ public class FrozenIndices extends Plugin implements ActionPlugin, EnginePlugin,
 
     @Override
     public Map<String, DirectoryFactory> getDirectoryFactories() {
-        return Map.of("searchable_snapshot", new DirectoryFactory() {
+        return Map.of(SEARCHABLE_SNAPSHOT_STORE, new DirectoryFactory() {
             @Override
             public Directory newDirectory(IndexSettings indexSettings, ShardPath shardPath) throws IOException {
                 return newDirectory(indexSettings, shardPath, null);

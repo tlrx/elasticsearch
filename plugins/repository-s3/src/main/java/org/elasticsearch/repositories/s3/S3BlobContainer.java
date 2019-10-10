@@ -35,6 +35,8 @@ import com.amazonaws.services.s3.model.PutObjectRequest;
 import com.amazonaws.services.s3.model.S3Object;
 import com.amazonaws.services.s3.model.UploadPartRequest;
 import com.amazonaws.services.s3.model.UploadPartResult;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.lucene.util.SetOnce;
 import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.common.Nullable;
@@ -67,6 +69,8 @@ import static org.elasticsearch.repositories.s3.S3Repository.MIN_PART_SIZE_USING
 
 class S3BlobContainer extends AbstractBlobContainer {
 
+    private static final Logger logger = LogManager.getLogger(S3BlobContainer.class);
+
     /**
      * Maximum number of deletes in a {@link DeleteObjectsRequest}.
      * @see <a href="https://docs.aws.amazon.com/AmazonS3/latest/API/multiobjectdeleteapi.html">S3 Documentation</a>.
@@ -89,13 +93,15 @@ class S3BlobContainer extends AbstractBlobContainer {
 
     @Override
     public byte[] readBlob(final String blobName, final int offset, final int length) throws IOException {
+
+        logger.trace("read_blob {} offset {} length {}", blobName, offset, length);
+
         // Fold this into S3RetryingInputStream
         final String blobKey = buildKey(blobName);
         try (AmazonS3Reference clientReference = blobStore.clientReference()) {
             final GetObjectRequest getObjectRequest = new GetObjectRequest(blobStore.bucket(), blobKey);
             getObjectRequest.setRange(offset, Math.max(1, offset + length - 1));
             final S3Object s3Object = SocketAccess.doPrivileged(() -> clientReference.client().getObject(getObjectRequest));
-
             return BytesReference.toBytes(Streams.readFully(s3Object.getObjectContent()));
         } catch (final AmazonClientException e) {
             if (e instanceof AmazonS3Exception) {
