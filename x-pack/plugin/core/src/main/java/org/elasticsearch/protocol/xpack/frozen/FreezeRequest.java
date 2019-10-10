@@ -5,19 +5,28 @@
  */
 package org.elasticsearch.protocol.xpack.frozen;
 
+import org.elasticsearch.ElasticsearchGenerationException;
+import org.elasticsearch.Version;
 import org.elasticsearch.action.ActionRequestValidationException;
 import org.elasticsearch.action.IndicesRequest;
 import org.elasticsearch.action.admin.indices.open.OpenIndexResponse;
 import org.elasticsearch.action.support.ActiveShardCount;
 import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.action.support.master.AcknowledgedRequest;
+import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
+import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.util.CollectionUtils;
+import org.elasticsearch.common.xcontent.XContentBuilder;
+import org.elasticsearch.common.xcontent.XContentFactory;
+import org.elasticsearch.common.xcontent.XContentType;
 
 import java.io.IOException;
+import java.util.Map;
 
 import static org.elasticsearch.action.ValidateActions.addValidationError;
+import static org.elasticsearch.common.settings.Settings.Builder.EMPTY_SETTINGS;
 
 public class FreezeRequest extends AcknowledgedRequest<FreezeRequest>
     implements IndicesRequest.Replaceable {
@@ -25,6 +34,7 @@ public class FreezeRequest extends AcknowledgedRequest<FreezeRequest>
     private boolean freeze = true;
     private IndicesOptions indicesOptions = IndicesOptions.strictExpandOpen();
     private ActiveShardCount waitForActiveShards = ActiveShardCount.DEFAULT;
+    private Settings settings = EMPTY_SETTINGS;
 
     public FreezeRequest(String... indices) {
         this.indices = indices;
@@ -36,6 +46,9 @@ public class FreezeRequest extends AcknowledgedRequest<FreezeRequest>
         indices = in.readStringArray();
         freeze = in.readBoolean();
         waitForActiveShards = ActiveShardCount.readFrom(in);
+        if (in.getVersion().onOrAfter(Version.CURRENT)) {
+            settings = Settings.readSettingsFromStream(in);
+        }
     }
 
     @Override
@@ -63,6 +76,9 @@ public class FreezeRequest extends AcknowledgedRequest<FreezeRequest>
         out.writeStringArray(indices);
         out.writeBoolean(freeze);
         waitForActiveShards.writeTo(out);
+        if (out.getVersion().onOrAfter(Version.CURRENT)) {
+            Settings.writeSettingsToStream(settings, out);
+        }
     }
 
     /**
@@ -123,5 +139,32 @@ public class FreezeRequest extends AcknowledgedRequest<FreezeRequest>
     public FreezeRequest waitForActiveShards(ActiveShardCount waitForActiveShards) {
         this.waitForActiveShards = waitForActiveShards;
         return this;
+    }
+
+    public Settings settings() {
+        return settings;
+    }
+
+    public FreezeRequest settings(final Settings settings) {
+        this.settings = settings;
+        return this;
+    }
+
+    public FreezeRequest settings(String source, XContentType xContentType) {
+        this.settings = Settings.builder().loadFromSource(source, xContentType).build();
+        return this;
+    }
+
+    public void setSettings(final Map<String, Object> source) {
+        if (source == null || source.isEmpty()) {
+            return;
+        }
+        try {
+            XContentBuilder builder = XContentFactory.contentBuilder(XContentType.JSON);
+            builder.map(source);
+            settings(Strings.toString(builder), XContentType.JSON);
+        } catch (IOException e) {
+            throw new ElasticsearchGenerationException("Failed to generate [" + source + "]", e);
+        }
     }
 }

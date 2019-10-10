@@ -1,5 +1,7 @@
 package org.elasticsearch.repositories.blobstore;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.lucene.store.BufferedIndexInput;
 import org.elasticsearch.common.blobstore.BlobContainer;
 import org.elasticsearch.index.snapshots.blobstore.BlobStoreIndexShardSnapshot.FileInfo;
@@ -10,14 +12,14 @@ import java.util.Objects;
 
 public class BlobStoreIndexInput extends BufferedIndexInput {
 
+    private static final Logger logger = LogManager.getLogger(BlobStoreIndexInput.class);
+
     private final FileInfo fileInfo;
     private final BlobContainer container;
     private volatile boolean closed = false;
 
-    // we might want to tweak the BufferedIndexInput's buffer too
-    // (could be another index setting)
-    BlobStoreIndexInput(final String resourceDesc, final FileInfo fileInfo, final BlobContainer container) {
-        super(resourceDesc);
+    BlobStoreIndexInput(final String resourceDesc, final FileInfo fileInfo, final BlobContainer container, final int buffer) {
+        super(resourceDesc, buffer);
         this.fileInfo = Objects.requireNonNull(fileInfo);
         this.container = Objects.requireNonNull(container);
     }
@@ -29,6 +31,7 @@ public class BlobStoreIndexInput extends BufferedIndexInput {
         final long partSize = fileInfo.partSize().getBytes();
         final long adjustedOffset = getFilePointer() + offset;
         assert adjustedOffset < length();
+        logger.trace("read_internal {} size {} offset {} length {}", fileInfo.name(), fileInfo.length(), adjustedOffset, length);
 
         int readBytes = 0;
         for (long part = adjustedOffset / partSize; part < fileInfo.numberOfParts() && readBytes < length; part++) {
@@ -40,7 +43,6 @@ public class BlobStoreIndexInput extends BufferedIndexInput {
             // not sure how it works with compressed files
             byte[] bytes = container.readBlob(fileInfo.partName(part), Math.toIntExact(offsetPart), lengthPart);
             assert bytes.length == lengthPart;
-
             System.arraycopy(bytes, 0, buffer, readBytes, lengthPart);
             readBytes += lengthPart;
         }
@@ -63,6 +65,7 @@ public class BlobStoreIndexInput extends BufferedIndexInput {
     @Override
     public void close() throws IOException {
         this.closed = true;
+        logger.trace("close_internal {} size {}", fileInfo.name(), fileInfo.length());
     }
 
     private void ensureOpen() throws IOException {

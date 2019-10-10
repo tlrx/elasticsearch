@@ -30,25 +30,29 @@ import org.elasticsearch.cluster.metadata.MetaData;
 import org.elasticsearch.cluster.metadata.MetaDataIndexStateService;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.Priority;
+import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.index.Index;
+import org.elasticsearch.index.IndexModule;
 import org.elasticsearch.index.IndexSettings;
 import org.elasticsearch.index.engine.FrozenEngine;
 import org.elasticsearch.protocol.xpack.frozen.FreezeRequest;
 import org.elasticsearch.protocol.xpack.frozen.FreezeResponse;
+import org.elasticsearch.repositories.blobstore.BlobStoreDirectory;
 import org.elasticsearch.tasks.Task;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
 import org.elasticsearch.xpack.core.frozen.action.FreezeIndexAction;
+import org.elasticsearch.xpack.frozen.FrozenIndices;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
-public final class TransportFreezeIndexAction extends
-    TransportMasterNodeAction<FreezeRequest, FreezeResponse> {
+public final class TransportFreezeIndexAction extends TransportMasterNodeAction<FreezeRequest, FreezeResponse> {
 
     private static final Logger logger = LogManager.getLogger(TransportFreezeIndexAction.class);
 
@@ -137,7 +141,8 @@ public final class TransportFreezeIndexAction extends
         });
     }
 
-    private void toggleFrozenSettings(final Index[] concreteIndices, final FreezeRequest request,
+    private void toggleFrozenSettings(final Index[] concreteIndices,
+                                      final FreezeRequest request,
                                       final ActionListener<FreezeResponse> listener) {
         clusterService.submitStateUpdateTask("toggle-frozen-settings",
             new AckedClusterStateUpdateTask<>(Priority.URGENT, request, new ActionListener<AcknowledgedResponse>() {
@@ -170,22 +175,48 @@ public final class TransportFreezeIndexAction extends
                 final MetaData.Builder builder = MetaData.builder(currentState.metaData());
                 ClusterBlocks.Builder blocks = ClusterBlocks.builder().blocks(currentState.blocks());
                 for (Index index : concreteIndices) {
-                    IndexMetaData meta = currentState.metaData().getIndexSafe(index);
+                    final IndexMetaData meta = currentState.metaData().getIndexSafe(index);
                     if (meta.getState() != IndexMetaData.State.CLOSE) {
                         throw new IllegalStateException("index [" + index.getName() + "] is not closed");
                     }
+                    final Settings indexSettings = currentState.metaData().index(index).getSettings();
                     final IndexMetaData.Builder imdBuilder = IndexMetaData.builder(meta);
                     imdBuilder.settingsVersion(meta.getSettingsVersion() + 1);
                     final Settings.Builder settingsBuilder =
                         Settings.builder()
-                            .put(currentState.metaData().index(index).getSettings())
+                            .put(indexSettings)
                             .put(FrozenEngine.INDEX_FROZEN.getKey(), request.freeze())
                             .put(IndexSettings.INDEX_SEARCH_THROTTLED.getKey(), request.freeze());
                     if (request.freeze()) {
                         settingsBuilder.put("index.blocks.write", true);
                         blocks.addIndexBlock(index.getName(), IndexMetaData.INDEX_WRITE_BLOCK);
+
+                        String repositoryName = BlobStoreDirectory.REPOSITORY_NAME.get(request.settings());
+                        if (Strings.hasLength(repositoryName)) {
+                            settingsBuilder.put(BlobStoreDirectory.REPOSITORY_NAME.getKey(), repositoryName);
+                        }
+                        String snapshotName = BlobStoreDirectory.REPOSITORY_SNAPSHOT.get(request.settings());
+                        if (Strings.hasLength(repositoryName)) {
+                            settingsBuilder.put(BlobStoreDirectory.REPOSITORY_SNAPSHOT.getKey(), snapshotName);
+                        }
+                        String indexName = BlobStoreDirectory.REPOSITORY_INDEX.get(request.settings());
+                        if (Strings.hasLength(indexName)) {
+                            settingsBuilder.put(BlobStoreDirectory.REPOSITORY_INDEX.getKey(), indexName);
+                        }
+                        if (BlobStoreDirectory.REPOSITORY_BUFFER.exists(request.settings())) {
+                            settingsBuilder.put(BlobStoreDirectory.REPOSITORY_BUFFER.getKey(),
+                                BlobStoreDirectory.REPOSITORY_BUFFER.get(request.settings()));
+                        }
+
+                        if (Strings.hasLength(repositoryName) || BlobStoreDirectory.REPOSITORY_NAME.exists(indexSettings)) {
+                            settingsBuilder.put(IndexModule.INDEX_STORE_TYPE_SETTING.getKey(), FrozenIndices.SEARCHABLE_SNAPSHOT_STORE);
+                        }
                     } else {
                         settingsBuilder.remove("index.blocks.write");
+                        if (BlobStoreDirectory.REPOSITORY_NAME.exists(indexSettings)
+                            && FrozenIndices.SEARCHABLE_SNAPSHOT_STORE.equals(IndexModule.INDEX_STORE_TYPE_SETTING.get(indexSettings))) {
+                            settingsBuilder.remove(IndexModule.INDEX_STORE_TYPE_SETTING.getKey());
+                        }
                         blocks.removeIndexBlock(index.getName(), IndexMetaData.INDEX_WRITE_BLOCK);
                     }
                     imdBuilder.settings(settingsBuilder);

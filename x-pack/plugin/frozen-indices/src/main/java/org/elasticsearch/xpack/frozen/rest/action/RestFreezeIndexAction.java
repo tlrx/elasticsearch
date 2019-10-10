@@ -9,12 +9,15 @@ import org.elasticsearch.action.support.ActiveShardCount;
 import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.client.node.NodeClient;
 import org.elasticsearch.common.Strings;
+import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.protocol.xpack.frozen.FreezeRequest;
 import org.elasticsearch.rest.BaseRestHandler;
 import org.elasticsearch.rest.RestController;
 import org.elasticsearch.rest.RestRequest;
 import org.elasticsearch.rest.action.RestToXContentListener;
 import org.elasticsearch.xpack.core.frozen.action.FreezeIndexAction;
+
+import java.io.IOException;
 
 public final class RestFreezeIndexAction extends BaseRestHandler {
 
@@ -24,7 +27,7 @@ public final class RestFreezeIndexAction extends BaseRestHandler {
     }
 
     @Override
-    protected RestChannelConsumer prepareRequest(RestRequest request, NodeClient client) {
+    protected RestChannelConsumer prepareRequest(RestRequest request, NodeClient client) throws IOException {
         boolean freeze = request.path().endsWith("/_freeze");
         FreezeRequest freezeRequest = new FreezeRequest(Strings.splitStringByCommaToArray(request.param("index")));
         freezeRequest.timeout(request.paramAsTime("timeout", freezeRequest.timeout()));
@@ -35,6 +38,12 @@ public final class RestFreezeIndexAction extends BaseRestHandler {
             freezeRequest.waitForActiveShards(ActiveShardCount.parseString(waitForActiveShards));
         }
         freezeRequest.setFreeze(freeze);
+
+        if (request.hasContent()) {
+            try (XContentParser parser = request.contentParser()) {
+                freezeRequest.setSettings(parser.map());
+            }
+        }
         return channel -> client.execute(FreezeIndexAction.INSTANCE, freezeRequest, new RestToXContentListener<>(channel));
     }
 

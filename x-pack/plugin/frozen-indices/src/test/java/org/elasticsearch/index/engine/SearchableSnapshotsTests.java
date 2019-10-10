@@ -5,6 +5,8 @@ import com.amazonaws.util.Base16;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
+import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.FilterDirectory;
 import org.apache.lucene.util.IOUtils;
 import org.elasticsearch.action.admin.cluster.snapshots.create.CreateSnapshotResponse;
 import org.elasticsearch.action.admin.indices.settings.get.GetSettingsResponse;
@@ -39,6 +41,7 @@ import org.elasticsearch.rest.RestUtils;
 import org.elasticsearch.snapshots.SnapshotState;
 import org.elasticsearch.test.ESIntegTestCase;
 import org.elasticsearch.test.ESSingleNodeTestCase;
+import org.elasticsearch.test.junit.annotations.TestLogging;
 import org.elasticsearch.xpack.core.frozen.action.FreezeIndexAction;
 import org.elasticsearch.xpack.frozen.FrozenIndices;
 import org.junit.AfterClass;
@@ -51,6 +54,7 @@ import java.io.InputStreamReader;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -66,6 +70,8 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAcked;
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertHitCount;
 import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.in;
+import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.nullValue;
 
 public class SearchableSnapshotsTests extends ESSingleNodeTestCase {
@@ -88,6 +94,7 @@ public class SearchableSnapshotsTests extends ESSingleNodeTestCase {
             .build();
     }
 
+    @TestLogging(value = "org.elasticsearch.repositories.blobstore:TRACE,org.elasticsearch.repositories.s3:TRACE", reason = "debug")
     public void testSearchableSnapshot() throws Exception {
         final String index = "test";
         createIndex(index, Settings.builder()
@@ -131,38 +138,48 @@ public class SearchableSnapshotsTests extends ESSingleNodeTestCase {
                 .setSettings(settings));
         }
 
+        assertAcked(client().admin().indices().prepareClose(index));
+
         final String snapshot = "snapshot";
         assertThat(client().admin().cluster().prepareCreateSnapshot(repository, snapshot).setIndices(index).setWaitForCompletion(true)
             .get().getSnapshotInfo().state(), equalTo(SnapshotState.SUCCESS));
 
-        // This is how this test transits from existing index to glacial index:
-        // - close the index
-        // - add searchable snapshot index settings
-        // - delete existing segments files on disk
-        // - freeze the index (so that it recovers from existing store)
+        // Use the Freeze API to transit from open -> frozen + searchable snapshots
         //
-        // we might want to use restore to do this, but as of today we can only restore open indices
-        // and that require to bootstrap a new translog history + write commit
-        assertAcked(client().admin().indices().prepareClose(index));
-        assertAcked(client().admin().indices().prepareUpdateSettings(index).setSettings(Settings.builder()
+        // POST docs/_freeze
+        //{
+        //  "index": {
+        //    "glacial": {
+        //      "repository": "repository",
+        //      "snapshot": "snapshot-0",
+        //      "index": "docs",
+        //      "buffer_size": "1mb"
+        //    }
+        //  }
+        //}
+        //
+        logger.info("freezing index with {} docs", nbDocs);
+        final FreezeRequest freezeRequest = new FreezeRequest(index);
+        freezeRequest.settings(Settings.builder()
             .put(BlobStoreDirectory.REPOSITORY_NAME.getKey(), repository)
             .put(BlobStoreDirectory.REPOSITORY_SNAPSHOT.getKey(), snapshot)
             .put(BlobStoreDirectory.REPOSITORY_INDEX.getKey(), index)
-            .put(IndexModule.INDEX_STORE_TYPE_SETTING.getKey(), "searchable_snapshot")
-            .build()
-        ));
+            .put(BlobStoreDirectory.REPOSITORY_BUFFER.getKey(),
+                new ByteSizeValue(randomIntBetween(1, 10), randomFrom(ByteSizeUnit.KB, ByteSizeUnit.MB)))
+            .build());
+        assertAcked(client().execute(FreezeIndexAction.INSTANCE, freezeRequest).actionGet());
+        ensureGreen(index);
 
-        for (IndexService indexService : getInstanceFromNode(IndicesService.class)) {
-            if (indexService.index().getName().equals(index)) {
-                for (IndexShard indexShard : indexService) {
-                    IOUtils.rm(indexShard.shardPath().resolveIndex());
-                }
+        IndicesService indicesService = getInstanceFromNode(IndicesService.class);
+        for (IndexService indexService : indicesService) {
+            if (indexService.getMetaData().getIndex().getName().equals(index)) {
+                IndexShard indexShard = indexService.getShard(0);
+                assertThat(FilterDirectory.unwrap(indexShard.store().directory()), instanceOf(BlobStoreDirectory.class));
+                Path indexPath = indexShard.shardPath().resolveIndex();
+                logger.info("removing {}", indexPath);
+                IOUtils.rm(indexPath);
             }
         }
-
-        logger.info("freezing index with {} docs", nbDocs);
-        assertAcked(client().execute(FreezeIndexAction.INSTANCE, new FreezeRequest(index)).actionGet());
-        ensureGreen(index);
 
         assertHitCount(client().prepareSearch(index)
             .setIndicesOptions(IndicesOptions.LENIENT_EXPAND_OPEN)

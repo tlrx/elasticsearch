@@ -1,13 +1,19 @@
 package org.elasticsearch.repositories.blobstore;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.lucene.store.BaseDirectory;
+import org.apache.lucene.store.BufferedIndexInput;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.store.SingleInstanceLockFactory;
 import org.elasticsearch.Version;
+import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.blobstore.BlobContainer;
 import org.elasticsearch.common.settings.Setting;
+import org.elasticsearch.common.settings.Setting.Property;
+import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.index.IndexSettings;
 import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.index.shard.ShardPath;
@@ -24,34 +30,36 @@ import java.io.IOException;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Locale;
-import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
 public class BlobStoreDirectory extends BaseDirectory {
 
+    private static final Logger logger = LogManager.getLogger(BlobStoreDirectory.class);
+
     // associate a snapshot name & index name but we could pin a specific snapshot too
     // if we don't use restore to bootstrap the index then we need to check the number of shards is correct
-    public static Setting<String> REPOSITORY_NAME = Setting.simpleString("index.glacial.repository", Setting.Property.IndexScope);
-    public static Setting<String> REPOSITORY_SNAPSHOT = Setting.simpleString("index.glacial.snapshot", Setting.Property.IndexScope);
-    public static Setting<String> REPOSITORY_INDEX = Setting.simpleString("index.glacial.index", Setting.Property.IndexScope);
+    public static Setting<String> REPOSITORY_NAME = Setting.simpleString("index.glacial.repository", Property.IndexScope);
+    public static Setting<String> REPOSITORY_SNAPSHOT = Setting.simpleString("index.glacial.snapshot", Property.IndexScope);
+    public static Setting<String> REPOSITORY_INDEX = Setting.simpleString("index.glacial.index", Property.IndexScope);
+    public static Setting<ByteSizeValue> REPOSITORY_BUFFER = Setting.byteSizeSetting("index.glacial.buffer_size",
+        new ByteSizeValue(BufferedIndexInput.BUFFER_SIZE), new ByteSizeValue(BufferedIndexInput.MIN_BUFFER_SIZE),
+        new ByteSizeValue(Integer.MAX_VALUE), Property.IndexScope);
 
     private final BlobStoreRepository repository;
     private final SnapshotId snapshotId;
     private final IndexId indexId;
     private final ShardId shardId;
+    private final int buffer;
 
     private volatile BlobStoreIndexShardSnapshot files;
 
     public BlobStoreDirectory(final IndexSettings indexSettings, final ShardPath shardPath, final RepositoriesService repositories) {
         super(new SingleInstanceLockFactory());
-        String repositoryName = Objects.requireNonNull(indexSettings.getSettings().get(REPOSITORY_NAME.getKey()));
-        this.repository = requireRepository(repositories, repositoryName);
-        RepositoryData repositoryData = repository.getRepositoryData();
-        String indexName = Objects.requireNonNull(indexSettings.getSettings().get(REPOSITORY_INDEX.getKey()));
-        this.indexId = requireIndex(repositoryData, indexName);
-        String snapshotName = Objects.requireNonNull(indexSettings.getSettings().get(REPOSITORY_SNAPSHOT.getKey()));
-        this.snapshotId = requireSnapshot(repositoryData, indexId, snapshotName);
+        this.repository = requireRepository(repositories, indexSettings);
+        this.indexId = requireIndex(repository.getRepositoryData(), indexSettings);
+        this.snapshotId = requireSnapshot(repository.getRepositoryData(), indexSettings, indexId);
+        this.buffer = Math.toIntExact(REPOSITORY_BUFFER.get(indexSettings.getSettings()).getBytes());
         this.shardId = shardPath.getShardId();
     }
 
@@ -69,6 +77,8 @@ public class BlobStoreDirectory extends BaseDirectory {
                     this.files = repository.loadShardSnapshot(shardContainer(), snapshotId);
                 }
             }
+            logger.info("snapshot {} total_files {} total_size {}\n{}",
+                files.snapshot(), files.totalFileCount(), new ByteSizeValue(files.totalSize()), Strings.toString(files, true, false));
         }
         assert files != null;
     }
@@ -98,8 +108,9 @@ public class BlobStoreDirectory extends BaseDirectory {
 
     @Override
     public IndexInput openInput(final String name, final IOContext context) throws IOException {
+        logger.trace("open file [{}] with buffer [{}]", fileInfo(name), buffer);
         return new BlobStoreIndexInput(String.format(Locale.ROOT, "repository: %s, snapshot: %s, index: %s, shard: %d, file: %s",
-            repository.getMetadata().name(), snapshotId, indexId, shardId.id(), name), fileInfo(name), shardContainer());
+            repository.getMetadata().name(), snapshotId, indexId, shardId.id(), name), fileInfo(name), shardContainer(), buffer);
     }
 
     @Override
@@ -142,7 +153,11 @@ public class BlobStoreDirectory extends BaseDirectory {
         return Collections.emptySet();
     }
 
-    private static BlobStoreRepository requireRepository(final RepositoriesService repositories, final String repositoryName) {
+    private static BlobStoreRepository requireRepository(final RepositoriesService repositories, final IndexSettings indexSettings) {
+        final String repositoryName = indexSettings.getSettings().get(REPOSITORY_NAME.getKey());
+        if (Strings.hasLength(repositoryName) == false) {
+            throw new IllegalStateException("No repository defined in index settings");
+        }
         final Repository repository = repositories.repository(repositoryName);
         if (repository == null) {
             throw new IllegalStateException("Repository [" + repositoryName + "] does not exist");
@@ -152,19 +167,27 @@ public class BlobStoreDirectory extends BaseDirectory {
         return (BlobStoreRepository) repository;
     }
 
-    private static IndexId requireIndex(final RepositoryData repositoryData, final String indexName) {
+    private static IndexId requireIndex(final RepositoryData repositoryData, final IndexSettings indexSettings) {
+        final String indexName = indexSettings.getSettings().get(REPOSITORY_INDEX.getKey());
+        if (Strings.hasLength(indexName) == false) {
+            throw new IllegalStateException("No index name defined in index settings");
+        }
         if (repositoryData.getIndices().containsKey(indexName) == false) {
             throw new IllegalStateException("Index [" + indexName + "] not found in repository data");
         }
         return repositoryData.resolveIndexId(indexName);
     }
 
-    private static SnapshotId requireSnapshot(final RepositoryData repositoryData, final IndexId indexId, final String snapshotName) {
-        final Set<SnapshotId> snapshotIds = repositoryData.getSnapshots(indexId).stream()
+    private static SnapshotId requireSnapshot(final RepositoryData repositoryData, final IndexSettings indexSettings, final IndexId index) {
+        final String snapshotName = indexSettings.getSettings().get(REPOSITORY_SNAPSHOT.getKey());
+        if (Strings.hasLength(snapshotName) == false) {
+            throw new IllegalStateException("No snapshot name defined in index settings");
+        }
+        final Set<SnapshotId> snapshotIds = repositoryData.getSnapshots(index).stream()
             .filter(snapshotId -> snapshotName.equals(snapshotId.getName()))
             .collect(Collectors.toSet());
         if (snapshotIds.isEmpty() || snapshotIds.size() != 1) {
-            throw new IllegalStateException("No snapshots with name [" + snapshotName + "] found for index [" + indexId + "]");
+            throw new IllegalStateException("No snapshots with name [" + snapshotName + "] found for index [" + index + "]");
         }
         return snapshotIds.iterator().next();
     }
