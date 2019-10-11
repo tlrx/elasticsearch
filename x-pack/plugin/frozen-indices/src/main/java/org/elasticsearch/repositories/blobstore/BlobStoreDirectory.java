@@ -108,9 +108,13 @@ public class BlobStoreDirectory extends BaseDirectory {
 
     @Override
     public IndexInput openInput(final String name, final IOContext context) throws IOException {
-        logger.trace("open file [{}] with buffer [{}]", fileInfo(name), buffer);
-        return new BlobStoreIndexInput(String.format(Locale.ROOT, "repository: %s, snapshot: %s, index: %s, shard: %d, file: %s",
-            repository.getMetadata().name(), snapshotId, indexId, shardId.id(), name), fileInfo(name), shardContainer(), buffer);
+        BlobStoreIndexShardSnapshot.FileInfo file = fileInfo(name);
+        int buffer = adjustBufferSize(file, this.buffer);
+        String resourceDesc = String.format(Locale.ROOT, "repository: %s, snapshot: %s, index: %s, shard: %d, file: %s",
+            repository.getMetadata().name(), snapshotId, indexId, shardId.id(), name);
+
+        logger.trace("open file [{}] with buffer [{}]", file, buffer);
+        return new BlobStoreIndexInput(resourceDesc, file, shardContainer(), buffer);
     }
 
     @Override
@@ -201,5 +205,9 @@ public class BlobStoreDirectory extends BaseDirectory {
             throw new IllegalStateException("Snapshot [" + snapshotId + "] was created with Elasticsearch version [" +
                 snapshotInfo.version() + "] which is higher than the version of this node [" + Version.CURRENT + "]");
         }
+    }
+
+    private static int adjustBufferSize(final BlobStoreIndexShardSnapshot.FileInfo fileInfo, final int defaultBufferSize) {
+        return Math.toIntExact(Math.min((long) defaultBufferSize, fileInfo.length()));
     }
 }
