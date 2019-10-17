@@ -29,7 +29,6 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.Locale;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -77,8 +76,6 @@ public class BlobStoreDirectory extends BaseDirectory {
                     this.files = repository.loadShardSnapshot(shardContainer(), snapshotId);
                 }
             }
-            logger.info("snapshot {} total_files {} total_size {}\n{}",
-                files.snapshot(), files.totalFileCount(), new ByteSizeValue(files.totalSize()), Strings.toString(files, true, false));
         }
         assert files != null;
     }
@@ -108,13 +105,7 @@ public class BlobStoreDirectory extends BaseDirectory {
 
     @Override
     public IndexInput openInput(final String name, final IOContext context) throws IOException {
-        BlobStoreIndexShardSnapshot.FileInfo file = fileInfo(name);
-        int buffer = adjustBufferSize(file, this.buffer);
-        String resourceDesc = String.format(Locale.ROOT, "repository: %s, snapshot: %s, index: %s, shard: %d, file: %s",
-            repository.getMetadata().name(), snapshotId, indexId, shardId.id(), name);
-
-        logger.trace("open file [{}] with buffer [{}]", file, buffer);
-        return new BlobStoreIndexInput(resourceDesc, file, shardContainer(), buffer);
+        return new BlobStoreIndexInput(shardContainer(), fileInfo(name));
     }
 
     @Override

@@ -112,7 +112,7 @@ public class SearchableSnapshotsTests extends ESSingleNodeTestCase {
         assertHitCount(client().prepareSearch(index).setSize(0).setTrackTotalHits(true).get(), nbDocs);
 
         final String repository = "repository";
-        if (randomBoolean()) {
+        if (true) {
             logger.info("creating s3 repository {}", repository);
             assertAcked(client().admin().cluster().preparePutRepository(repository)
                 .setType("s3")
@@ -168,7 +168,7 @@ public class SearchableSnapshotsTests extends ESSingleNodeTestCase {
                 new ByteSizeValue(randomIntBetween(1, 10), randomFrom(ByteSizeUnit.KB, ByteSizeUnit.MB)))
             .build());
         assertAcked(client().execute(FreezeIndexAction.INSTANCE, freezeRequest).actionGet());
-        ensureGreen(index);
+        ensureGreen(TimeValue.timeValueHours(1), index);
 
         IndicesService indicesService = getInstanceFromNode(IndicesService.class);
         for (IndexService indexService : indicesService) {
@@ -345,7 +345,7 @@ public class SearchableSnapshotsTests extends ESSingleNodeTestCase {
 
                             final int start = Integer.parseInt(matcher.group(1));
                             final int end = Integer.parseInt(matcher.group(2));
-                            final int length = end - start + 1;
+                            final int length = end - start;
 
                             exchange.getResponseHeaders().add("Content-Type", "application/octet-stream");
                             exchange.getResponseHeaders().add("Content-Range",

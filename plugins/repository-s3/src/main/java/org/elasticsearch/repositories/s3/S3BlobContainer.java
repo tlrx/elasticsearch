@@ -88,7 +88,12 @@ class S3BlobContainer extends AbstractBlobContainer {
 
     @Override
     public InputStream readBlob(String blobName) throws IOException {
-        return new S3RetryingInputStream(blobStore, buildKey(blobName));
+        return readBlob(blobName, 0L, 0L);
+    }
+
+    @Override
+    public InputStream readBlob(String blobName, long offset, long length) throws IOException {
+        return new S3RetryingInputStream(blobStore, buildKey(blobName), offset, offset + length);
     }
 
     @Override

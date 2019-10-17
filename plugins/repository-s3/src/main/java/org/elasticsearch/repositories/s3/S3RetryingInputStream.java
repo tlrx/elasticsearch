@@ -25,8 +25,8 @@ import com.amazonaws.services.s3.model.S3Object;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.message.ParameterizedMessage;
-import org.elasticsearch.core.internal.io.IOUtils;
 import org.elasticsearch.Version;
+import org.elasticsearch.core.internal.io.IOUtils;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -55,12 +55,19 @@ class S3RetryingInputStream extends InputStream {
     private int attempt = 1;
     private List<IOException> failures = new ArrayList<>(MAX_SUPPRESSED_EXCEPTIONS);
     private long currentOffset;
+    private long lastOffset;
     private boolean closed;
 
     S3RetryingInputStream(S3BlobStore blobStore, String blobKey) throws IOException {
+        this(blobStore, blobKey, 0L, 0L);
+    }
+
+    S3RetryingInputStream(S3BlobStore blobStore, String blobKey, long from, long to) throws IOException {
         this.blobStore = blobStore;
         this.blobKey = blobKey;
         this.maxAttempts = blobStore.getMaxRetries() + 1;
+        this.currentOffset = from;
+        this.lastOffset = to;
         currentStream = openStream();
     }
 
@@ -68,7 +75,11 @@ class S3RetryingInputStream extends InputStream {
         try (AmazonS3Reference clientReference = blobStore.clientReference()) {
             final GetObjectRequest getObjectRequest = new GetObjectRequest(blobStore.bucket(), blobKey);
             if (currentOffset > 0) {
-                getObjectRequest.setRange(currentOffset);
+                if (lastOffset > 0) {
+                    getObjectRequest.setRange(currentOffset, lastOffset);
+                } else {
+                    getObjectRequest.setRange(currentOffset);
+                }
             }
             final S3Object s3Object = SocketAccess.doPrivileged(() -> clientReference.client().getObject(getObjectRequest));
             return s3Object.getObjectContent();

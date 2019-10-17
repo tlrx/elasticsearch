@@ -49,6 +49,10 @@ public interface BlobContainer {
      */
     InputStream readBlob(String blobName) throws IOException;
 
+    default InputStream readBlob(String blobName, long offset, long length) throws IOException {
+        throw new UnsupportedOperationException();
+    }
+
     default byte[] readBlob(String blobName, int off, int len) throws IOException {
         throw new UnsupportedOperationException();
     }
