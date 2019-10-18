@@ -5,10 +5,9 @@ import com.amazonaws.util.Base16;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
-import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FilterDirectory;
 import org.apache.lucene.util.IOUtils;
-import org.elasticsearch.action.admin.cluster.snapshots.create.CreateSnapshotResponse;
+import org.elasticsearch.action.admin.indices.forcemerge.ForceMergeResponse;
 import org.elasticsearch.action.admin.indices.settings.get.GetSettingsResponse;
 import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
@@ -24,10 +23,7 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.ByteSizeUnit;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.unit.TimeValue;
-import org.elasticsearch.common.xcontent.XContentType;
-import org.elasticsearch.index.IndexModule;
 import org.elasticsearch.index.IndexService;
-import org.elasticsearch.index.IndexSettings;
 import org.elasticsearch.index.query.QueryBuilders;
 import org.elasticsearch.index.shard.IndexShard;
 import org.elasticsearch.indices.IndicesService;
@@ -39,6 +35,7 @@ import org.elasticsearch.repositories.s3.S3RepositoryPlugin;
 import org.elasticsearch.rest.RestStatus;
 import org.elasticsearch.rest.RestUtils;
 import org.elasticsearch.snapshots.SnapshotState;
+import org.elasticsearch.test.BackgroundIndexer;
 import org.elasticsearch.test.ESIntegTestCase;
 import org.elasticsearch.test.ESSingleNodeTestCase;
 import org.elasticsearch.test.junit.annotations.TestLogging;
@@ -63,6 +60,10 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -70,7 +71,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAcked;
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertHitCount;
 import static org.hamcrest.Matchers.equalTo;
-import static org.hamcrest.Matchers.in;
+import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.nullValue;
 
@@ -100,19 +101,21 @@ public class SearchableSnapshotsTests extends ESSingleNodeTestCase {
         createIndex(index, Settings.builder()
             .put(IndexMetaData.SETTING_NUMBER_OF_SHARDS, 1)
             .put(IndexMetaData.SETTING_NUMBER_OF_REPLICAS, 0)
-            .put(IndexSettings.INDEX_REFRESH_INTERVAL_SETTING.getKey(), TimeValue.ZERO)
             .build());
 
-        final int nbDocs = scaledRandomIntBetween(100, 30_000);
-        for (int i = 0; i < nbDocs; i++) {
-            client().prepareIndex().setIndex(index).setSource("{\"field\":" + i + "}", XContentType.JSON).get();
+        final long nbDocs = randomLongBetween(100_000L, 120_000L);
+        try (BackgroundIndexer indexer = new BackgroundIndexer(index, "_doc", client(), (int) nbDocs)) {
+            assertBusy(() -> assertThat(indexer.totalIndexedDocs(), greaterThanOrEqualTo(nbDocs)));
         }
-        assertThat(client().admin().indices().prepareForceMerge(index).setFlush(true).get().getFailedShards(), equalTo(0));
-        assertThat(client().admin().indices().prepareRefresh(index).get().getFailedShards(), equalTo(0));
+
+        assertBusy(() -> assertHitCount(client().prepareSearch(index).setSize(0).setTrackTotalHits(true).get(), nbDocs));
+
+        ForceMergeResponse forceMerge = client().admin().indices().prepareForceMerge(index).setFlush(true).setMaxNumSegments(1).get();
+        assertThat(forceMerge.getSuccessfulShards(), equalTo(1));
         assertHitCount(client().prepareSearch(index).setSize(0).setTrackTotalHits(true).get(), nbDocs);
 
         final String repository = "repository";
-        if (true) {
+        if (randomBoolean()) {
             logger.info("creating s3 repository {}", repository);
             assertAcked(client().admin().cluster().preparePutRepository(repository)
                 .setType("s3")
@@ -122,6 +125,8 @@ public class SearchableSnapshotsTests extends ESSingleNodeTestCase {
                     .put("bucket", "bucket")
                     .put("client", "test")
                     .put("disable_chunked_encoding", true)
+                    .put("chunk_size", new ByteSizeValue(5L, ByteSizeUnit.MB))
+                    .put("buffer_size", new ByteSizeValue(5L, ByteSizeUnit.MB))
                     .build()));
         } else {
             logger.info("creating fs repository {}", repository);
@@ -130,7 +135,8 @@ public class SearchableSnapshotsTests extends ESSingleNodeTestCase {
             settings.put("location", ESIntegTestCase.randomRepoPath(node().settings()));
             if (randomBoolean()) {
                 long size = 1 << randomInt(10);
-                settings.put("chunk_size", new ByteSizeValue(size, ByteSizeUnit.KB));
+                //settings.put("chunk_size", new ByteSizeValue(size, ByteSizeUnit.KB));
+                settings.put("chunk_size", new ByteSizeValue(5L, ByteSizeUnit.MB));
             }
             assertAcked(client().admin().cluster().preparePutRepository(repository)
                 .setType("fs")
@@ -168,7 +174,7 @@ public class SearchableSnapshotsTests extends ESSingleNodeTestCase {
                 new ByteSizeValue(randomIntBetween(1, 10), randomFrom(ByteSizeUnit.KB, ByteSizeUnit.MB)))
             .build());
         assertAcked(client().execute(FreezeIndexAction.INSTANCE, freezeRequest).actionGet());
-        ensureGreen(TimeValue.timeValueHours(1), index);
+        ensureGreen(TimeValue.timeValueMinutes(10), index);
 
         IndicesService indicesService = getInstanceFromNode(IndicesService.class);
         for (IndexService indexService : indicesService) {
@@ -188,20 +194,15 @@ public class SearchableSnapshotsTests extends ESSingleNodeTestCase {
 
         assertHitCount(client().prepareSearch(index)
             .setIndicesOptions(IndicesOptions.LENIENT_EXPAND_OPEN)
-            .setQuery(QueryBuilders.termQuery("field", 5))
+            .setQuery(QueryBuilders.termQuery("test", "value5"))
             .setTrackTotalHits(true)
             .setSize(0).get(), 1);
 
         assertHitCount(client().prepareSearch(index)
             .setIndicesOptions(IndicesOptions.LENIENT_EXPAND_OPEN)
-            .setQuery(QueryBuilders.rangeQuery("field").lt(nbDocs / 2))
+            .setQuery(QueryBuilders.rangeQuery("id").lte(100))
             .setTrackTotalHits(true)
-            .setSize(10).get(), nbDocs / 2);
-
-        assertHitCount(client().prepareSearch(index)
-            .setIndicesOptions(IndicesOptions.LENIENT_EXPAND_OPEN)
-            .setTrackTotalHits(true)
-            .setSize(0).get(), nbDocs);
+            .setSize(10).get(), 100L);
 
         GetSettingsResponse getSettingsResponse = client().admin().indices().prepareGetSettings(index).get();
         assertThat(getSettingsResponse.getSetting(index, BlobStoreDirectory.REPOSITORY_NAME.getKey()), equalTo(repository));
@@ -211,10 +212,13 @@ public class SearchableSnapshotsTests extends ESSingleNodeTestCase {
     }
 
     private static HttpServer httpServer;
+    private static ExecutorService executor;
 
     @BeforeClass
     public static void startHttpServer() throws Exception {
-        httpServer = MockHttpServer.createHttp(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+        executor = Executors.newCachedThreadPool();
+        httpServer = MockHttpServer.createHttp(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 100);
+        httpServer.setExecutor(executor);
         httpServer.start();
     }
 
@@ -224,10 +228,18 @@ public class SearchableSnapshotsTests extends ESSingleNodeTestCase {
     }
 
     @AfterClass
-    public static void stopHttpServer() {
+    public static void stopHttpServer() throws Exception {
+        executor.shutdown();
+        final boolean finishedNormally = executor.awaitTermination(15, TimeUnit.SECONDS);
+        if (finishedNormally == false) {
+            executor.shutdownNow();
+        }
         httpServer.stop(0);
         httpServer = null;
     }
+
+
+    private static final AtomicLong requests = new AtomicLong(0);
 
     /**
      * Minimal HTTP handler that acts as a S3 compliant server
@@ -240,7 +252,8 @@ public class SearchableSnapshotsTests extends ESSingleNodeTestCase {
         @Override
         public void handle(final HttpExchange exchange) throws IOException {
             final String request = exchange.getRequestMethod() + " " + exchange.getRequestURI().toString();
-            System.out.println(request + " " + exchange.getRequestHeaders().getFirst("Range"));
+            System.out.println("start " + requests.incrementAndGet() + " "
+                + request + " " + exchange.getRequestHeaders().getFirst("Range"));
             try {
                 if (Regex.simpleMatch("POST /bucket/*?uploads", request)) {
                     final String uploadId = UUIDs.randomBase64UUID();
@@ -394,6 +407,7 @@ public class SearchableSnapshotsTests extends ESSingleNodeTestCase {
                 }
             } finally {
                 exchange.close();
+                System.out.println(" end " + requests.decrementAndGet() + " " +  request  + exchange.getRequestHeaders().getFirst("Range"));
             }
         }
 

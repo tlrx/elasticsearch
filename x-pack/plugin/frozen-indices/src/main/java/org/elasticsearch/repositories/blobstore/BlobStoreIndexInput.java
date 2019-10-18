@@ -4,6 +4,7 @@ import org.apache.lucene.store.IndexInput;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.blobstore.BlobContainer;
 import org.elasticsearch.common.collect.Tuple;
+import org.elasticsearch.common.io.Streams;
 import org.elasticsearch.common.unit.ByteSizeUnit;
 import org.elasticsearch.core.internal.io.IOUtils;
 import org.elasticsearch.index.snapshots.blobstore.BlobStoreIndexShardSnapshot.FileInfo;
@@ -13,6 +14,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class BlobStoreIndexInput extends IndexInput {
 
@@ -26,6 +29,11 @@ public class BlobStoreIndexInput extends IndexInput {
     private boolean initialized;
     private boolean closed;
 
+    private static final AtomicLong ids = new AtomicLong(0);
+    private final long id;
+    private final String name;
+    private final CopyOnWriteArrayList<BlobStoreIndexInput> clones = new CopyOnWriteArrayList<>();
+
     BlobStoreIndexInput(BlobContainer container, FileInfo fileInfo) {
         this(fileInfo.name(), container, fileInfo, fileInfo.length(), 0L);
     }
@@ -37,6 +45,14 @@ public class BlobStoreIndexInput extends IndexInput {
         this.fileLength = fileLength;
         this.initialPosition = initialPosition;
         this.currentPosition = this.initialPosition;
+        this.id = ids.getAndIncrement();
+        this.name = name;
+        System.out.println(">> create " + id() + " for " + fileInfo.physicalName());
+    }
+
+    private String id() {
+        return id + "-" + name + "(init: " + initialPosition + ", curr: " + currentPosition + ", len: "+ fileLength
+            + ", stream: " + (currentStream != null ? System.identityHashCode(currentStream) : "null") + ")";
     }
 
     @Override
@@ -78,7 +94,9 @@ public class BlobStoreIndexInput extends IndexInput {
             final long partPosition = part.get().v2();
             final long partSize = fileInfo.partBytes((int) partNumber);
             if (partPosition < partSize) {
+                System.out.println(">> open " + id() + "\r\n\t\t" + fileInfo.partName(partNumber) + " at " + partPosition + " fo " + (partSize -partPosition));
                 currentStream = container.readBlob(fileInfo.partName(partNumber), partPosition, partSize - partPosition);
+                System.out.println(">> opened " + id());
             } else {
                 currentStream = null;
             }
@@ -92,17 +110,13 @@ public class BlobStoreIndexInput extends IndexInput {
     private long closeStream(final InputStream inputStream) {
         long byteCount = 0;
         if (inputStream != null) {
-            try {
-                byte[] buffer = new byte[1024];
-                int bytesRead;
-                while ((bytesRead = inputStream.read(buffer)) != -1) {
-                    byteCount += bytesRead;
-                }
+            System.out.println(">> closeStream " + id());
+            /*try {
+                Streams.readFully(inputStream);
             } catch (IOException e) {
-
-            } finally {
-                IOUtils.closeWhileHandlingException(inputStream);
-            }
+                e.printStackTrace();
+            }*/
+            IOUtils.closeWhileHandlingException(inputStream);
         }
         return byteCount;
     }
@@ -115,13 +129,16 @@ public class BlobStoreIndexInput extends IndexInput {
             throw new IOException("Seeking to negative position [" + pos + "] for " + toString());
         }
         final long seekingPosition = pos + initialPosition;
+        System.out.println(">> seek " + pos + "->" + seekingPosition + " " + id());
         if (seekingPosition == currentPosition) {
             return;
         }
         if (seekingPosition < currentPosition || (seekingPosition - currentPosition > ByteSizeUnit.MB.toBytes(1L))) {
             openStream(seekingPosition);
         } else {
+            System.out.println(">> skipBytes " + (seekingPosition - currentPosition) + " " + id());
             skipBytes(seekingPosition - currentPosition);
+            System.out.println(">> skipBytes(done) " + (seekingPosition - currentPosition) + " " + id());
             assert currentPosition == seekingPosition;
         }
     }
@@ -129,7 +146,7 @@ public class BlobStoreIndexInput extends IndexInput {
     @Override
     public IndexInput slice(final String sliceDescription, final long offset, final long length) throws IOException {
         if (offset >= 0L && length >= 0L && offset + length <= length()) {
-            return new BlobStoreIndexInput(sliceDescription, container, fileInfo, length, initialPosition + offset);
+            return new BlobStoreIndexInput("slice " + sliceDescription, container, fileInfo, length, initialPosition + offset);
         } else {
             throw new IllegalArgumentException("slice() " + sliceDescription + " out of bounds: offset=" + offset
                 + ",length=" + length + ",fileLength=" + length() + ": " + this);
@@ -138,7 +155,11 @@ public class BlobStoreIndexInput extends IndexInput {
 
     @Override
     public IndexInput clone() {
-        return new BlobStoreIndexInput(toString(), container, fileInfo, fileLength, initialPosition);
+        String id = id();
+        BlobStoreIndexInput clone = new BlobStoreIndexInput("clone("  + toString(), container, fileInfo, fileLength, initialPosition);
+        System.out.println(">> clone from " + id + " to " +id());
+        addClone(clone);
+        return clone;
     }
 
     @Override
@@ -149,6 +170,7 @@ public class BlobStoreIndexInput extends IndexInput {
             return -1;
         }
         final int read = stream.read();
+        System.out.println(">> readByte [1] from " + id());
         if (read == -1) {
             nextStream();
             return readByte();
@@ -165,6 +187,7 @@ public class BlobStoreIndexInput extends IndexInput {
             return;
         }
         final int read = stream.read(buffer, offset, length);
+        System.out.println(">> readBytes [" + read + "] from " + id());
         if (read == -1) {
             nextStream();
             readBytes(buffer, offset, length);
@@ -177,9 +200,15 @@ public class BlobStoreIndexInput extends IndexInput {
         }
     }
 
+    synchronized void addClone(final BlobStoreIndexInput slice) {
+        clones.add(Objects.requireNonNull(slice));
+    }
+
     @Override
-    public void close() throws IOException {
+    public synchronized void close() throws IOException {
+        System.out.println(">> close " + id());
         closeStream(currentStream);
+        IOUtils.closeWhileHandlingException(clones);
         closed = true;
         currentStream = null;
         initialized = true;
