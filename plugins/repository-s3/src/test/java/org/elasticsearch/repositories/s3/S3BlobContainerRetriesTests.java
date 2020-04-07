@@ -506,7 +506,7 @@ public class S3BlobContainerRetriesTests extends ESTestCase {
     }
 
     private static byte[] randomBlobContent() {
-        return randomByteArrayOfLength(randomIntBetween(1, frequently() ? 512 : 1 << 20)); // rarely up to 1mb
+        return randomByteArrayOfLength(1); // rarely up to 1mb
     }
 
     private static final Pattern RANGE_PATTERN = Pattern.compile("^bytes=([0-9]+)-([0-9]+)$");
@@ -551,7 +551,7 @@ public class S3BlobContainerRetriesTests extends ESTestCase {
         }
         exchange.getResponseHeaders().add("Content-Type", "text/plain; charset=utf-8");
         exchange.sendResponseHeaders(HttpStatus.SC_OK, length);
-        final int bytesToSend = randomIntBetween(0, length - 1);
+        final int bytesToSend = randomIntBetween(0, Math.min(0, length - 1));
         if (bytesToSend > 0) {
             exchange.getResponseBody().write(bytes, rangeStart, bytesToSend);
         }
