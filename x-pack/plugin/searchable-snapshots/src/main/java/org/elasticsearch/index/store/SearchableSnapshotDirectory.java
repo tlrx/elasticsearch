@@ -317,6 +317,10 @@ public class SearchableSnapshotDirectory extends BaseDirectory {
             return new ByteArrayIndexInput("ByteArrayIndexInput(" + name + ')', content.bytes, content.offset, content.length);
         }
 
+        if (context == Store.READONCE_CHECKSUM) {
+            return ChecksumFooterIndexInput.create(fileInfo.physicalName(), fileInfo.length(), fileInfo.checksum());
+        }
+
         final IndexInputStats inputStats = stats.computeIfAbsent(name, n -> createIndexInputStats(fileInfo.length()));
         if (useCache && isExcludedFromCache(name) == false) {
             return new CachedBlobContainerIndexInput(this, fileInfo, context, inputStats, cacheService.getRangeSize());
