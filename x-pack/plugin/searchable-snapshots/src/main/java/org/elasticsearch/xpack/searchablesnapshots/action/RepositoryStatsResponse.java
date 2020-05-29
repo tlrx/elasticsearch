@@ -40,6 +40,10 @@ public class RepositoryStatsResponse extends BaseNodesResponse<RepositoryStatsNo
         }
     }
 
+    public RepositoryStats getStats() {
+        return globalStats;
+    }
+
     @Override
     protected List<RepositoryStatsNodeResponse> readNodesFrom(StreamInput in) throws IOException {
         return in.readList(RepositoryStatsNodeResponse::new);

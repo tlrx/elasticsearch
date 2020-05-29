@@ -101,7 +101,7 @@ public class CachedBlobContainerIndexInputTests extends ESIndexInputTestCase {
                         threadPool
                     )
                 ) {
-                    final boolean loaded = directory.loadSnapshot();
+                    final boolean loaded = directory.loadSnapshot(() -> {});
                     assertThat("Failed to load snapshot", loaded, is(true));
                     assertThat("Snapshot should be loaded", directory.snapshot(), notNullValue());
                     assertThat("BlobContainer should be loaded", directory.blobContainer(), notNullValue());
@@ -173,7 +173,7 @@ public class CachedBlobContainerIndexInputTests extends ESIndexInputTestCase {
                     threadPool
                 )
             ) {
-                final boolean loaded = searchableSnapshotDirectory.loadSnapshot();
+                final boolean loaded = searchableSnapshotDirectory.loadSnapshot(() -> {});
                 assertThat("Failed to load snapshot", loaded, is(true));
                 assertThat("Snapshot should be loaded", searchableSnapshotDirectory.snapshot(), notNullValue());
                 assertThat("BlobContainer should be loaded", searchableSnapshotDirectory.blobContainer(), notNullValue());

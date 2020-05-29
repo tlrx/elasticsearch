@@ -6,11 +6,13 @@
 package org.elasticsearch.xpack.searchablesnapshots;
 
 import org.apache.lucene.index.SegmentInfos;
+import org.apache.lucene.store.AlreadyClosedException;
 import org.elasticsearch.cluster.routing.RecoverySource;
 import org.elasticsearch.index.IndexSettings;
 import org.elasticsearch.index.seqno.SequenceNumbers;
 import org.elasticsearch.index.shard.IndexEventListener;
 import org.elasticsearch.index.shard.IndexShard;
+import org.elasticsearch.index.shard.IndexShardClosedException;
 import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.index.store.SearchableSnapshotDirectory;
 import org.elasticsearch.index.translog.Translog;
@@ -33,8 +35,13 @@ public class SearchableSnapshotIndexEventListener implements IndexEventListener 
     private static void ensureSnapshotIsLoaded(IndexShard indexShard) {
         final SearchableSnapshotDirectory directory = SearchableSnapshotDirectory.unwrapDirectory(indexShard.store().directory());
         assert directory != null;
-
-        final boolean success = directory.loadSnapshot();
+        final boolean success = directory.loadSnapshot(() -> {
+            try {
+                indexShard.refresh("refresh_needed");
+            } catch (IndexShardClosedException | AlreadyClosedException ex) {
+                // fine - continue;
+            }
+        });
         assert directory.listAll().length > 0 : "expecting directory listing to be non-empty";
         assert success
             || indexShard.routingEntry()

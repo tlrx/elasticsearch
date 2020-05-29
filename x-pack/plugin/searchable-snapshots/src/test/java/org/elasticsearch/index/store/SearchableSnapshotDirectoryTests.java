@@ -566,7 +566,7 @@ public class SearchableSnapshotDirectoryTests extends ESTestCase {
                         threadPool
                     )
                 ) {
-                    final boolean loaded = snapshotDirectory.loadSnapshot();
+                    final boolean loaded = snapshotDirectory.loadSnapshot(() -> {});
                     assertThat("Failed to load snapshot", loaded, is(true));
                     assertThat("Snapshot should be loaded", snapshotDirectory.snapshot(), sameInstance(snapshot));
                     assertThat("BlobContainer should be loaded", snapshotDirectory.blobContainer(), sameInstance(blobContainer));
@@ -655,7 +655,7 @@ public class SearchableSnapshotDirectoryTests extends ESTestCase {
                 )
             ) {
 
-                final boolean loaded = directory.loadSnapshot();
+                final boolean loaded = directory.loadSnapshot(() -> {});
                 assertThat("Failed to load snapshot", loaded, is(true));
                 assertThat("Snapshot should be loaded", directory.snapshot(), sameInstance(snapshot));
                 assertThat("BlobContainer should be loaded", directory.blobContainer(), sameInstance(blobContainer));

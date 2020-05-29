@@ -67,6 +67,7 @@ import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 import static java.util.Collections.emptyMap;
@@ -78,7 +79,7 @@ import static org.hamcrest.Matchers.is;
 
 public class CachePreWarmingTests extends ESTestCase {
 
-    public void testCachePreWarming() throws Exception {
+    public void testPreWarmingLoadsAllSnapshotFiles() throws Exception {
         final IndexSettings indexSettings = IndexSettingsModule.newIndexSettings(
             "_index",
             Settings.builder()
@@ -226,13 +227,15 @@ public class CachePreWarmingTests extends ESTestCase {
                     assertThat(filterBlobContainer.totalFilesRead(), equalTo(0L));
                     assertThat(filterBlobContainer.totalBytesRead(), equalTo(0L));
 
-                    final boolean loaded = snapshotDirectory.loadSnapshot();
+                    final AtomicBoolean prewarmCallbackExecuted = new AtomicBoolean(false);
+                    final boolean loaded = snapshotDirectory.loadSnapshot(() -> prewarmCallbackExecuted.set(true));
                     assertThat("Failed to load snapshot", loaded, is(true));
 
                     final ExecutorService executor = threadPool.executor(SEARCHABLE_SNAPSHOTS_THREAD_POOL_NAME);
                     executor.shutdown();
                     executor.awaitTermination(30L, TimeUnit.SECONDS);
 
+                    assertThat("prewarming callback should have been executed", prewarmCallbackExecuted.get(), equalTo(true));
                     assertThat(
                         filterBlobContainer.totalFilesRead(),
                         equalTo(expectedPrewarmedBlobs.stream().mapToLong(FileInfo::numberOfParts).sum())

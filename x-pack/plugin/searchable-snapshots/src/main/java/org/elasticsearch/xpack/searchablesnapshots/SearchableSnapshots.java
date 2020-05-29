@@ -28,9 +28,8 @@ import org.elasticsearch.env.NodeEnvironment;
 import org.elasticsearch.index.IndexModule;
 import org.elasticsearch.index.IndexSettings;
 import org.elasticsearch.index.engine.EngineFactory;
-import org.elasticsearch.index.engine.ReadOnlyEngine;
+import org.elasticsearch.index.engine.SearchableSnapshotEngine;
 import org.elasticsearch.index.store.SearchableSnapshotDirectory;
-import org.elasticsearch.index.translog.TranslogStats;
 import org.elasticsearch.license.License;
 import org.elasticsearch.license.LicenseUtils;
 import org.elasticsearch.license.XPackLicenseState;
@@ -223,9 +222,7 @@ public class SearchableSnapshots extends Plugin implements IndexStorePlugin, Eng
     public Optional<EngineFactory> getEngineFactory(IndexSettings indexSettings) {
         if (SearchableSnapshotsConstants.isSearchableSnapshotStore(indexSettings.getSettings())
             && indexSettings.getSettings().getAsBoolean("index.frozen", false) == false) {
-            return Optional.of(
-                engineConfig -> new ReadOnlyEngine(engineConfig, null, new TranslogStats(), false, Function.identity(), false)
-            );
+            return Optional.of(SearchableSnapshotEngine::new);
         }
         return Optional.empty();
     }

@@ -26,6 +26,7 @@ import org.apache.lucene.index.NoMergePolicy;
 import org.apache.lucene.index.SegmentInfos;
 import org.apache.lucene.search.Sort;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.FSDirectory;
 import org.apache.lucene.store.FilterDirectory;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
@@ -399,7 +400,9 @@ final class StoreRecovery {
                 writeEmptyRetentionLeasesFile(indexShard);
             } else if (indexShouldExists) {
                 if (recoveryState.getRecoverySource().shouldBootstrapNewHistoryUUID()) {
-                    store.bootstrapNewHistory();
+                    if (store.isSnapshotStoreType() == false) {
+                        store.bootstrapNewHistory();
+                    }
                     writeEmptyRetentionLeasesFile(indexShard);
                 }
                 // since we recover from local, just fill the files and size
@@ -462,7 +465,9 @@ final class StoreRecovery {
         final ActionListener<Void> restoreListener = ActionListener.wrap(
             v -> {
                 final Store store = indexShard.store();
-                bootstrap(indexShard, store);
+                if (store.isSnapshotStoreType() == false) {
+                    bootstrap(indexShard, store);
+                }
                 assert indexShard.shardRouting.primary() : "only primary shards can recover from store";
                 writeEmptyRetentionLeasesFile(indexShard);
                 indexShard.openEngineAndRecoverFromTranslog();

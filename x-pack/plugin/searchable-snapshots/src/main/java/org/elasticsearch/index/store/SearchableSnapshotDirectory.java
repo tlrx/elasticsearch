@@ -30,6 +30,7 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.util.LazyInitializable;
 import org.elasticsearch.common.util.concurrent.ConcurrentCollections;
+import org.elasticsearch.common.util.concurrent.CountDown;
 import org.elasticsearch.core.internal.io.IOUtils;
 import org.elasticsearch.index.IndexSettings;
 import org.elasticsearch.index.shard.ShardId;
@@ -167,9 +168,10 @@ public class SearchableSnapshotDirectory extends BaseDirectory {
     /**
      * Loads the snapshot if and only if it the snapshot is not loaded yet.
      *
+     * @param onDirectoryCachePrewarmed a {@link Runnable} to be executed once the cache is prewarmed
      * @return true if the snapshot was loaded by executing this method, false otherwise
      */
-    public boolean loadSnapshot() {
+    public boolean loadSnapshot(Runnable onDirectoryCachePrewarmed) {
         assert assertCurrentThreadMayLoadSnapshot();
         boolean alreadyLoaded = this.loaded;
         if (alreadyLoaded == false) {
@@ -179,7 +181,7 @@ public class SearchableSnapshotDirectory extends BaseDirectory {
                     this.blobContainer = blobContainerSupplier.get();
                     this.snapshot = snapshotSupplier.get();
                     this.loaded = true;
-                    prewarmCache();
+                    prewarmCache(onDirectoryCachePrewarmed);
                 }
             }
         }
@@ -363,7 +365,7 @@ public class SearchableSnapshotDirectory extends BaseDirectory {
         return this.getClass().getSimpleName() + "@snapshotId=" + snapshotId + " lockFactory=" + lockFactory;
     }
 
-    private void prewarmCache() {
+    private void prewarmCache(final Runnable onDirectoryCachePrewarmed) {
         if (prewarmCache) {
             final BlockingQueue<Tuple<ActionListener<Void>, CheckedRunnable<Exception>>> queue = new LinkedBlockingQueue<>();
             final Executor executor = threadPool.executor(SEARCHABLE_SNAPSHOTS_THREAD_POOL_NAME);
@@ -412,19 +414,31 @@ public class SearchableSnapshotDirectory extends BaseDirectory {
 
             // Start as many workers as fit into the searchable snapshot pool at once at the most
             final int workers = Math.min(threadPool.info(SEARCHABLE_SNAPSHOTS_THREAD_POOL_NAME).getMax(), queue.size());
+            final CountDown prewarmCountDown = new CountDown(workers);
             for (int i = 0; i < workers; ++i) {
-                prewarmNext(executor, queue);
+                prewarmNext(executor, queue, () -> {
+                    if (prewarmCountDown.countDown()) {
+                        onDirectoryCachePrewarmed.run();
+                    }
+                });
             }
         }
     }
 
-    private void prewarmNext(final Executor executor, final BlockingQueue<Tuple<ActionListener<Void>, CheckedRunnable<Exception>>> queue) {
+    private void prewarmNext(
+        final Executor executor,
+        final BlockingQueue<Tuple<ActionListener<Void>, CheckedRunnable<Exception>>> queue,
+        final Runnable onWorkerFinished
+    ) {
         try {
             final Tuple<ActionListener<Void>, CheckedRunnable<Exception>> next = queue.poll(0L, TimeUnit.MILLISECONDS);
             if (next == null) {
+                onWorkerFinished.run();
                 return;
             }
-            executor.execute(ActionRunnable.run(ActionListener.runAfter(next.v1(), () -> prewarmNext(executor, queue)), next.v2()));
+            executor.execute(
+                ActionRunnable.run(ActionListener.runAfter(next.v1(), () -> prewarmNext(executor, queue, onWorkerFinished)), next.v2())
+            );
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             logger.warn(() -> new ParameterizedMessage("{} prewarming worker has been interrupted", shardId), e);
