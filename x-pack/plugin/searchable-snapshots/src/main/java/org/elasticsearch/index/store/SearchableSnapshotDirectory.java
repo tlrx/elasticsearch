@@ -67,6 +67,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
+import java.util.stream.LongStream;
 
 import static org.apache.lucene.store.BufferedIndexInput.bufferSize;
 import static org.elasticsearch.index.IndexModule.INDEX_STORE_TYPE_SETTING;
@@ -184,6 +186,14 @@ public class SearchableSnapshotDirectory extends BaseDirectory {
             }
         }
         assert invariant();
+        if (alreadyLoaded == false) {
+            final List<String> files = files().stream()
+                .map(fileInfo -> "\n" + fileInfo.physicalName() + " " + fileInfo.length())
+                .collect(Collectors.toList());
+
+            logger.info("Record: snapshot_name: {}, snapshot_id: {}, index_name: {}, shard_id: {}:\n{}",
+                this.snapshotId.getName(), this.snapshotId.getUUID(), this.indexId.getName(), this.shardId.id(), files);
+        }
         return alreadyLoaded == false;
     }
 
@@ -479,20 +489,49 @@ public class SearchableSnapshotDirectory extends BaseDirectory {
         final Path cacheDir = shardPath.getDataPath().resolve("snapshots").resolve(snapshotId.getUUID());
         Files.createDirectories(cacheDir);
 
-        return new InMemoryNoOpCommitDirectory(
-            new SearchableSnapshotDirectory(
-                lazyBlobContainer::getOrCompute,
-                lazySnapshot::getOrCompute,
-                snapshotId,
-                indexId,
-                shardPath.getShardId(),
-                indexSettings.getSettings(),
-                currentTimeNanosSupplier,
-                cache,
-                cacheDir,
-                threadPool
-            )
+        final SearchableSnapshotDirectory snapshotDirectory = new SearchableSnapshotDirectory(
+            lazyBlobContainer::getOrCompute,
+            lazySnapshot::getOrCompute,
+            snapshotId,
+            indexId,
+            shardPath.getShardId(),
+            indexSettings.getSettings(),
+            currentTimeNanosSupplier,
+            cache,
+            cacheDir,
+            threadPool
         );
+
+        final RecordingDirectory recordingDirectory = new RecordingDirectory(
+            snapshotDirectory,
+            (fileName, fileLength, readMethod, readAt, readLength, readFromClone) ->
+                logger.info(() -> new ParameterizedMessage(
+                    "\n{\"create\":{\"_index\":\"records-{}\"}}\n" +
+                    "{" +
+                        "\"shard\":{}," +
+                        "\"file\":{" +
+                            "\"name\":\"{}\"," +
+                            "\"length\":{}," +
+                            "\"ext\":\"{}\"" +
+                        "}," +
+                        "\"read\":{" +
+                            "\"method\":\"{}\"," +
+                            "\"start\":{}," +
+                            "\"end\":{}," +
+                            "\"at\":{}," +
+                            "\"length\":{}," +
+                            "\"from_clone\":{}" +
+                        "}" +
+                    "}", indexId.getName(),
+                    shardPath.getShardId().id(),
+                    fileName, fileLength, IndexFileNames.getExtension(fileName),
+                    readMethod, readAt, readAt + readLength,
+                    LongStream.range(readAt, readAt + readLength).boxed().collect(Collectors.toList()),
+                    readLength, readFromClone
+                    ))
+        );
+
+        return new InMemoryNoOpCommitDirectory(recordingDirectory);
     }
 
     public static SearchableSnapshotDirectory unwrapDirectory(Directory dir) {

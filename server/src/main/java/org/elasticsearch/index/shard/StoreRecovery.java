@@ -399,7 +399,9 @@ final class StoreRecovery {
                 writeEmptyRetentionLeasesFile(indexShard);
             } else if (indexShouldExists) {
                 if (recoveryState.getRecoverySource().shouldBootstrapNewHistoryUUID()) {
-                    store.bootstrapNewHistory();
+                    if (store.isSnapshotStoreType() == false) {
+                        store.bootstrapNewHistory();
+                    }
                     writeEmptyRetentionLeasesFile(indexShard);
                 }
                 // since we recover from local, just fill the files and size
@@ -462,7 +464,9 @@ final class StoreRecovery {
         final ActionListener<Void> restoreListener = ActionListener.wrap(
             v -> {
                 final Store store = indexShard.store();
-                bootstrap(indexShard, store);
+                if (store.isSnapshotStoreType() == false) {
+                    bootstrap(indexShard, store);
+                }
                 assert indexShard.shardRouting.primary() : "only primary shards can recover from store";
                 writeEmptyRetentionLeasesFile(indexShard);
                 indexShard.openEngineAndRecoverFromTranslog();

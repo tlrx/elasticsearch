@@ -172,6 +172,10 @@ public abstract class FileRestoreContext {
     }
 
     private void afterRestore(SnapshotFiles snapshotFiles, Store store, StoreFileMetadata restoredSegmentsFile) {
+        if (store.isSnapshotStoreType()) {
+            return;
+        }
+
         // read the snapshot data persisted
         try {
             Lucene.pruneUnreferencedFiles(restoredSegmentsFile.name(), store.directory());

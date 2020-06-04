@@ -29,6 +29,7 @@ import org.apache.lucene.store.Lock;
 import org.elasticsearch.Version;
 import org.elasticsearch.common.lucene.Lucene;
 import org.elasticsearch.common.lucene.index.ElasticsearchDirectoryReader;
+import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.util.concurrent.ReleasableLock;
 import org.elasticsearch.core.internal.io.IOUtils;
 import org.elasticsearch.index.mapper.MapperService;
@@ -178,7 +179,12 @@ public class ReadOnlyEngine extends Engine {
 
     protected DirectoryReader open(IndexCommit commit) throws IOException {
         assert Transports.assertNotTransportThread("opening index commit of a read-only engine");
-        return new SoftDeletesDirectoryReaderWrapper(DirectoryReader.open(commit), Lucene.SOFT_DELETES_FIELD);
+        logger.info("Record: before opening directory reader");
+        final long before = System.nanoTime();
+        final DirectoryReader directoryReader = DirectoryReader.open(commit);
+        final long after = System.nanoTime();
+        logger.info("Record: after opening directory reader [took: {} ms]", TimeValue.nsecToMSec(after - before));
+        return new SoftDeletesDirectoryReaderWrapper(directoryReader, Lucene.SOFT_DELETES_FIELD);
     }
 
     @Override
