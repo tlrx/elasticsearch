@@ -366,8 +366,6 @@ public class SearchableSnapshotDirectory extends BaseDirectory {
     private void prewarmCache() {
         if (prewarmCache) {
             final BlockingQueue<Tuple<ActionListener<Void>, CheckedRunnable<Exception>>> queue = new LinkedBlockingQueue<>();
-            final Executor executor = threadPool.executor(SEARCHABLE_SNAPSHOTS_THREAD_POOL_NAME);
-
             for (BlobStoreIndexShardSnapshot.FileInfo file : snapshot().indexFiles()) {
                 if (file.metadata().hashEqualsContents() || isExcludedFromCache(file.physicalName())) {
                     continue;
@@ -413,18 +411,18 @@ public class SearchableSnapshotDirectory extends BaseDirectory {
             // Start as many workers as fit into the searchable snapshot pool at once at the most
             final int workers = Math.min(threadPool.info(SEARCHABLE_SNAPSHOTS_THREAD_POOL_NAME).getMax(), queue.size());
             for (int i = 0; i < workers; ++i) {
-                prewarmNext(executor, queue);
+                prewarmNext(queue);
             }
         }
     }
 
-    private void prewarmNext(final Executor executor, final BlockingQueue<Tuple<ActionListener<Void>, CheckedRunnable<Exception>>> queue) {
+    private void prewarmNext(final BlockingQueue<Tuple<ActionListener<Void>, CheckedRunnable<Exception>>> queue) {
         try {
             final Tuple<ActionListener<Void>, CheckedRunnable<Exception>> next = queue.poll(0L, TimeUnit.MILLISECONDS);
             if (next == null) {
                 return;
             }
-            executor.execute(ActionRunnable.run(ActionListener.runAfter(next.v1(), () -> prewarmNext(executor, queue)), next.v2()));
+            executor().execute(ActionRunnable.run(ActionListener.runAfter(next.v1(), () -> prewarmNext(queue)), next.v2()));
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             logger.warn(() -> new ParameterizedMessage("{} prewarming worker has been interrupted", shardId), e);
@@ -508,6 +506,10 @@ public class SearchableSnapshotDirectory extends BaseDirectory {
             }
         }
         return null;
+    }
+
+    public Executor executor() {
+        return threadPool.executor(SEARCHABLE_SNAPSHOTS_THREAD_POOL_NAME);
     }
 
     /**

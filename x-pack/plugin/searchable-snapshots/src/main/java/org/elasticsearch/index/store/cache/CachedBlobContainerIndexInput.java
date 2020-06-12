@@ -30,6 +30,7 @@ import java.nio.channels.FileChannel;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.stream.IntStream;
 
@@ -138,17 +139,17 @@ public class CachedBlobContainerIndexInput extends BaseSearchableSnapshotIndexIn
             final long pos = position + totalBytesRead;
             final int len = length - totalBytesRead;
             int bytesRead = 0;
+
+            final Tuple<Long, Long> range = computeRange(pos);
             try {
                 final CacheFile cacheFile = getCacheFileSafe();
-                try (ReleasableLock ignored = cacheFile.fileLock()) {
-                    final Tuple<Long, Long> range = computeRange(pos);
-                    bytesRead = cacheFile.fetchRange(
-                        range.v1(),
-                        range.v2(),
-                        (start, end) -> readCacheFile(cacheFile.getChannel(), end, pos, b, len),
-                        (start, end) -> writeCacheFile(cacheFile.getChannel(), start, end)
-                    ).get();
-                }
+                bytesRead = cacheFile.fetch(
+                    range.v1(),
+                    range.v2(),
+                    pos + len,
+                    (channel) -> readCacheFile(channel, pos, b, len),
+                    this::writeCacheFile
+                );
             } catch (final Exception e) {
                 if (e instanceof AlreadyClosedException || (e.getCause() != null && e.getCause() instanceof AlreadyClosedException)) {
                     try {
@@ -318,20 +319,10 @@ public class CachedBlobContainerIndexInput extends BaseSearchableSnapshotIndexIn
         return true;
     }
 
-    private int readCacheFile(FileChannel fc, long end, long position, ByteBuffer b, long length) throws IOException {
+    private int readCacheFile(FileChannel fc, long position, ByteBuffer b, long length) throws IOException {
         assert assertFileChannelOpen(fc);
-        final int bytesRead;
-
         assert b.remaining() == length;
-        if (end - position < b.remaining()) {
-            final ByteBuffer duplicate = b.duplicate();
-            duplicate.limit(b.position() + Math.toIntExact(end - position));
-            bytesRead = Channels.readFromFileChannel(fc, position, duplicate);
-            assert duplicate.position() < b.limit();
-            b.position(duplicate.position());
-        } else {
-            bytesRead = Channels.readFromFileChannel(fc, position, b);
-        }
+        final int bytesRead = Channels.readFromFileChannel(fc, position, b);
         if (bytesRead == -1) {
             throw new EOFException(
                 String.format(Locale.ROOT, "unexpected EOF reading [%d-%d] from %s", position, position + length, cacheFileReference)
@@ -341,7 +332,7 @@ public class CachedBlobContainerIndexInput extends BaseSearchableSnapshotIndexIn
         return bytesRead;
     }
 
-    private void writeCacheFile(FileChannel fc, long start, long end) throws IOException {
+    private void writeCacheFile(FileChannel fc, long start, long end, Consumer<Long> progressUpdater) throws IOException {
         assert assertFileChannelOpen(fc);
         final long length = end - start;
         final byte[] copyBuffer = new byte[Math.toIntExact(Math.min(COPY_BUFFER_SIZE, length))];
@@ -356,6 +347,7 @@ public class CachedBlobContainerIndexInput extends BaseSearchableSnapshotIndexIn
                 positionalWrite(fc, start + bytesCopied, ByteBuffer.wrap(copyBuffer, 0, bytesRead));
                 bytesCopied += bytesRead;
                 remaining -= bytesRead;
+                progressUpdater.accept(start + bytesCopied);
             }
             final long endTimeNanos = stats.currentTimeNanos();
             stats.addCachedBytesWritten(bytesCopied, endTimeNanos - startTimeNanos);

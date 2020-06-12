@@ -12,6 +12,7 @@ import org.elasticsearch.common.CheckedBiFunction;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.collect.Tuple;
 import org.elasticsearch.common.util.concurrent.AbstractRefCounted;
+import org.elasticsearch.common.util.concurrent.RefCounted;
 import org.elasticsearch.common.util.concurrent.ReleasableLock;
 
 import java.io.IOException;
@@ -26,7 +27,9 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.function.Consumer;
 
 public class CacheFile {
 
@@ -247,6 +250,75 @@ public class CacheFile {
         }
     }
 
+    @FunctionalInterface
+    interface CacheReader {
+        int read(FileChannel channel) throws IOException;
+    }
+
+    @FunctionalInterface
+    interface CacheWriter {
+        void write(FileChannel channel, long from, long to, Consumer<Long> monitor) throws IOException;
+    }
+
+    int fetch(final long start, final long end, final long position, final CacheReader reader, final CacheWriter writer) {
+        final RefCounted lockRefCount = new AbstractRefCounted("") {
+            final ReleasableLock lock = fileLock();
+
+            @Override
+            protected void closeInternal() {
+                lock.close();
+            }
+        };
+
+        boolean releaseLock = true;
+        try {
+            if (start < 0 || start > tracker.getLength() || start > end || end > tracker.getLength()) {
+                throw new IllegalArgumentException(
+                    "Invalid range [start=" + start + ", end=" + end + "] for length [" + tracker.getLength() + ']'
+                );
+            }
+            if (position < start || position > end) {
+                throw new IllegalArgumentException(
+                    "Cannot notify listener at position [" + position + "] for range [start=" + start + ", end=" + end + ']'
+                );
+            }
+            ensureOpen();
+            final CompletableFuture<Integer> future = new CompletableFuture<>();
+            final List<SparseFileTracker.Gap> gaps = tracker.waitForRange(
+                start,
+                end,
+                position,
+                ActionListener.runAfter(
+                    ActionListener.wrap(success -> future.complete(reader.read(channel)), future::completeExceptionally),
+                    lockRefCount::decRef
+                )
+            );
+            releaseLock = false;
+            for (SparseFileTracker.Gap gap : gaps) {
+                // TODO executes in threadpool
+                try {
+                    lockRefCount.incRef();
+                    try {
+                        ensureOpen();
+                        writer.write(channel, gap.start, gap.end, gap::onProgress);
+                        gap.onCompletion();
+                    } finally {
+                        lockRefCount.decRef();
+                    }
+                } catch (Exception e) {
+                    gap.onFailure(e);
+                }
+            }
+            return future.get();
+        } catch (InterruptedException | ExecutionException e) {
+            throw new UncheckedIOException(new IOException(e));
+        } finally {
+            if (releaseLock) {
+                lockRefCount.decRef();
+            }
+        }
+    }
+
     CompletableFuture<Integer> fetchRange(
         long start,
         long end,
@@ -274,7 +346,7 @@ public class CacheFile {
                 try {
                     ensureOpen();
                     onRangeMissing.accept(gap.start, gap.end);
-                    gap.onResponse(null);
+                    gap.onCompletion();
                 } catch (Exception e) {
                     gap.onFailure(e);
                 }
