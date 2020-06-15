@@ -143,13 +143,17 @@ public class CachedBlobContainerIndexInput extends BaseSearchableSnapshotIndexIn
             final Tuple<Long, Long> range = computeRange(pos);
             try {
                 final CacheFile cacheFile = getCacheFileSafe();
-                bytesRead = cacheFile.fetch(
-                    range.v1(),
-                    range.v2(),
-                    pos + len,
-                    (channel) -> readCacheFile(channel, pos, b, len),
-                    this::writeCacheFile
-                );
+                try (ReleasableLock lock = cacheFile.fileLock()) {
+                    bytesRead = cacheFile.fetch(
+                        range.v1(),
+                        range.v2(),
+                        pos,
+                        Math.min(pos + len, range.v2()),
+                        (channel) -> readCacheFile(channel, pos, b, len),
+                        this::writeCacheFile,
+                        directory.generic()
+                    );
+                }
             } catch (final Exception e) {
                 if (e instanceof AlreadyClosedException || (e.getCause() != null && e.getCause() instanceof AlreadyClosedException)) {
                     try {
@@ -186,7 +190,6 @@ public class CachedBlobContainerIndexInput extends BaseSearchableSnapshotIndexIn
         try {
             final CacheFile cacheFile = getCacheFileSafe();
             try (ReleasableLock ignored = cacheFile.fileLock()) {
-
                 final Tuple<Long, Long> range = cacheFile.getAbsentRangeWithin(partRange.v1(), partRange.v2());
                 if (range == null) {
                     logger.trace(
@@ -226,21 +229,14 @@ public class CachedBlobContainerIndexInput extends BaseSearchableSnapshotIndexIn
                         assert totalBytesRead + remainingBytes == rangeLength;
                         final int bytesRead = readSafe(input, copyBuffer, rangeStart, rangeEnd, remainingBytes, cacheFileReference);
                         final long readStart = rangeStart + totalBytesRead;
-                        cacheFile.fetchRange(readStart, readStart + bytesRead, (start, end) -> {
-                            logger.trace(
-                                "prefetchPart: range [{}-{}] of file [{}] is available in cache",
-                                start,
-                                end,
-                                fileInfo.physicalName()
-                            );
-                            return Math.toIntExact(end - start);
-                        }, (start, end) -> {
+                        cacheFile.fetch(readStart, readStart + bytesRead, readStart, readStart + bytesRead, (channel) -> 0,
+                            (channel, start, end, monitor) -> {
                             final ByteBuffer byteBuffer = ByteBuffer.wrap(
                                 copyBuffer,
                                 Math.toIntExact(start - readStart),
                                 Math.toIntExact(end - start)
                             );
-                            final int writtenBytes = positionalWrite(fc, start, byteBuffer);
+                            final int writtenBytes = positionalWrite(channel, start, byteBuffer);
                             logger.trace(
                                 "prefetchPart: writing range [{}-{}] of file [{}], [{}] bytes written",
                                 start,
@@ -248,8 +244,9 @@ public class CachedBlobContainerIndexInput extends BaseSearchableSnapshotIndexIn
                                 fileInfo.physicalName(),
                                 writtenBytes
                             );
+                            monitor.accept(start + writtenBytes);
                             totalBytesWritten.addAndGet(writtenBytes);
-                        });
+                        }, directory.generic());
                         totalBytesRead += bytesRead;
                         remainingBytes -= bytesRead;
                     }
@@ -322,6 +319,7 @@ public class CachedBlobContainerIndexInput extends BaseSearchableSnapshotIndexIn
     private int readCacheFile(FileChannel fc, long position, ByteBuffer b, long length) throws IOException {
         assert assertFileChannelOpen(fc);
         assert b.remaining() == length;
+        logger.fatal(() -> new ParameterizedMessage("read range [{}-{}] to cache file [{}]", position, position + length,  cacheFileReference.cacheKey.getFileName()));
         final int bytesRead = Channels.readFromFileChannel(fc, position, b);
         if (bytesRead == -1) {
             throw new EOFException(
@@ -336,7 +334,7 @@ public class CachedBlobContainerIndexInput extends BaseSearchableSnapshotIndexIn
         assert assertFileChannelOpen(fc);
         final long length = end - start;
         final byte[] copyBuffer = new byte[Math.toIntExact(Math.min(COPY_BUFFER_SIZE, length))];
-        logger.trace(() -> new ParameterizedMessage("writing range [{}-{}] to cache file [{}]", start, end, cacheFileReference));
+        logger.fatal(() -> new ParameterizedMessage("writing range [{}-{}] to cache file [{}]", start, end, cacheFileReference.cacheKey.getFileName()));
 
         long bytesCopied = 0L;
         long remaining = end - start;
@@ -351,6 +349,8 @@ public class CachedBlobContainerIndexInput extends BaseSearchableSnapshotIndexIn
             }
             final long endTimeNanos = stats.currentTimeNanos();
             stats.addCachedBytesWritten(bytesCopied, endTimeNanos - startTimeNanos);
+        } finally {
+            logger.fatal(() -> new ParameterizedMessage("DONE writing range [{}-{}] to cache file [{}]", start, end, cacheFileReference.cacheKey.getFileName()));
         }
     }
 

@@ -67,14 +67,18 @@ public class SparseFileTracker {
      * @throws IllegalArgumentException if invalid range is requested
      */
     public List<Gap> waitForRange(final long start, final long end, final ActionListener<Void> listener) {
-        return waitForRange(start, end, end, listener);
+        return waitForRange(start, end, start, end, listener);
     }
 
-    public List<Gap> waitForRange(final long start, final long end, final long position, final ActionListener<Void> listener) {
+    public List<Gap> waitForRange(final long start,
+                                  final long end,
+                                  final long readStart,
+                                  final long readEnd,
+                                  final ActionListener<Void> listener) {
         if (end < start || start < 0L || length < end) {
             throw new IllegalArgumentException("invalid range [start=" + start + ", end=" + end + ", length=" + length + "]");
         }
-        if (position < start || end > position) {
+        if (readStart < start || readEnd > end) {
             // throw new IllegalArgumentException("invalid range [start=" + start + ", end=" + end + ", length=" + length + "]");
         }
 
@@ -130,36 +134,32 @@ public class SparseFileTracker {
             assert targetRange.start == end : targetRange;
             assert invariant();
 
-            if (pendingRanges.isEmpty() == false) {
-                assert ranges.containsAll(pendingRanges) : ranges + " vs " + pendingRanges;
-                assert pendingRanges.stream().allMatch(Range::isPending) : pendingRanges;
-
-                if (pendingRanges.size() == 1) {
-                    assert gaps.size() <= 1 : gaps;
-                    pendingRanges.get(0).completionListener.addListener(position, listener);
-                } else {
-                    List<Range> cand = pendingRanges.stream()
-                        .filter(range -> range.start > position)
-                        .filter(range -> range.end < position)
-                        .collect(Collectors.toList());
-                    assert cand.size() == 1;
-                    cand.get(0).completionListener.addListener(position, listener);
-                    /*
-                    final GroupedActionListener<Void> groupedActionListener = new GroupedActionListener<>(
-                        ActionListener.map(listener, ignored -> null),
-                        pendingRanges.size()
-                    );
-                    pendingRanges.forEach(pendingRange -> pendingRange.completionListener.addListener(groupedActionListener));
-                    */
-                }
-
-                return Collections.unmodifiableList(gaps);
+            if (pendingRanges.isEmpty()) {
+                assert gaps.isEmpty();
+                listener.onResponse(null);
+                return Collections.emptyList();
             }
-        }
 
-        assert gaps.isEmpty(); // or else pendingRanges.isEmpty() == false so we already returned
-        listener.onResponse(null);
-        return Collections.emptyList();
+            assert ranges.containsAll(pendingRanges) : ranges + " vs " + pendingRanges;
+            assert pendingRanges.stream().allMatch(Range::isPending) : pendingRanges;
+
+            final List<Range> requiredPendingRanges = pendingRanges.stream()
+                .filter(range -> range.start <= readEnd)
+                .filter(range -> range.end >= readStart)
+                .collect(Collectors.toList());
+
+            if (requiredPendingRanges.isEmpty()) {
+                listener.onResponse(null);
+            } else {
+                final GroupedActionListener<Void> groupedActionListener = new GroupedActionListener<>(
+                    ActionListener.map(listener, ignored -> null),
+                    requiredPendingRanges.size()
+                );
+                System.out.println("waiting for " + description + " range to be available at " + readEnd);
+                requiredPendingRanges.forEach(pendingRange -> pendingRange.completionListener.addListener(readEnd, groupedActionListener));
+            }
+            return Collections.unmodifiableList(gaps);
+        }
     }
 
     /**

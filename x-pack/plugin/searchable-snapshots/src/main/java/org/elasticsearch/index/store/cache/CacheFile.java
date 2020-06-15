@@ -7,27 +7,29 @@ package org.elasticsearch.index.store.cache;
 
 import org.apache.lucene.store.AlreadyClosedException;
 import org.elasticsearch.action.ActionListener;
-import org.elasticsearch.common.CheckedBiConsumer;
-import org.elasticsearch.common.CheckedBiFunction;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.collect.Tuple;
 import org.elasticsearch.common.util.concurrent.AbstractRefCounted;
-import org.elasticsearch.common.util.concurrent.RefCounted;
+import org.elasticsearch.common.util.concurrent.AbstractRunnable;
 import org.elasticsearch.common.util.concurrent.ReleasableLock;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executor;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Consumer;
 
@@ -52,7 +54,7 @@ public class CacheFile {
     };
 
     private final ReleasableLock evictionLock;
-    private final ReleasableLock readLock;
+    private final ReentrantReadWriteLock.ReadLock readLock;
 
     private final SparseFileTracker tracker;
     private final String description;
@@ -73,7 +75,7 @@ public class CacheFile {
 
         final ReentrantReadWriteLock cacheLock = new ReentrantReadWriteLock();
         this.evictionLock = new ReleasableLock(cacheLock.writeLock());
-        this.readLock = new ReleasableLock(cacheLock.readLock());
+        this.readLock = cacheLock.readLock();
 
         assert invariant();
     }
@@ -88,7 +90,8 @@ public class CacheFile {
 
     ReleasableLock fileLock() {
         boolean success = false;
-        final ReleasableLock fileLock = readLock.acquire();
+        final ReleasableLock fileLock = new ReleasableLock(readLock);
+        fileLock.acquire();
         try {
             ensureOpen();
             // check if we have a channel while holding the read lock
@@ -100,6 +103,26 @@ public class CacheFile {
         } finally {
             if (success == false) {
                 fileLock.close();
+            }
+        }
+    }
+
+    Closeable tryFileLock() {
+        if (readLock.tryLock() == false) {
+            throw new AlreadyClosedException("Cache file channel has been released and closed");
+        }
+        boolean success = false;
+        try {
+            ensureOpen();
+            // check if we have a channel while holding the read lock
+            if (channel == null) {
+                throw new AlreadyClosedException("Cache file channel has been released and closed");
+            }
+            success = true;
+            return readLock::unlock;
+        } finally {
+            if (success == false) {
+                readLock.unlock();
             }
         }
     }
@@ -209,7 +232,7 @@ public class CacheFile {
     }
 
     private boolean invariant() {
-        try (ReleasableLock ignored = readLock.acquire()) {
+        try (ReleasableLock ignored = new ReleasableLock(readLock).acquire()) {
             assert listeners != null;
             if (listeners.isEmpty()) {
                 assert channel == null;
@@ -260,26 +283,20 @@ public class CacheFile {
         void write(FileChannel channel, long from, long to, Consumer<Long> monitor) throws IOException;
     }
 
-    int fetch(final long start, final long end, final long position, final CacheReader reader, final CacheWriter writer) {
-        final RefCounted lockRefCount = new AbstractRefCounted("") {
-            final ReleasableLock lock = fileLock();
+    int fetch(final long start, final long end,
+              final long from, final long to,
+              final CacheReader reader, final CacheWriter writer,
+              final Executor executor) {
 
-            @Override
-            protected void closeInternal() {
-                lock.close();
-            }
-        };
-
-        boolean releaseLock = true;
         try {
             if (start < 0 || start > tracker.getLength() || start > end || end > tracker.getLength()) {
                 throw new IllegalArgumentException(
                     "Invalid range [start=" + start + ", end=" + end + "] for length [" + tracker.getLength() + ']'
                 );
             }
-            if (position < start || position > end) {
+            if (from < start || to > end) {
                 throw new IllegalArgumentException(
-                    "Cannot notify listener at position [" + position + "] for range [start=" + start + ", end=" + end + ']'
+                    "Cannot notify listener at [from=" + from + ", to=" + to + "] for range [start=" + start + ", end=" + end + ']'
                 );
             }
             ensureOpen();
@@ -287,74 +304,46 @@ public class CacheFile {
             final List<SparseFileTracker.Gap> gaps = tracker.waitForRange(
                 start,
                 end,
-                position,
-                ActionListener.runAfter(
-                    ActionListener.wrap(success -> future.complete(reader.read(channel)), future::completeExceptionally),
-                    lockRefCount::decRef
-                )
+                from,
+                to,
+                ActionListener.wrap(success -> {
+                    System.out.println(">>> calling read method from " + from + " to " + to);
+                    future.complete(reader.read(channel));
+                }, future::completeExceptionally)
             );
-            releaseLock = false;
-            for (SparseFileTracker.Gap gap : gaps) {
-                // TODO executes in threadpool
-                try {
-                    lockRefCount.incRef();
-                    try {
-                        ensureOpen();
-                        writer.write(channel, gap.start, gap.end, gap::onProgress);
-                        gap.onCompletion();
-                    } finally {
-                        lockRefCount.decRef();
+
+            if (gaps.isEmpty() == false) {
+                final Iterator<SparseFileTracker.Gap> iterator = new ArrayList<>(gaps).iterator();
+
+                executor.execute(new AbstractRunnable() {
+
+                    @Override
+                    public void onFailure(Exception e) {
+                        iterator.forEachRemaining(gap -> gap.onFailure(e));
                     }
-                } catch (Exception e) {
-                    gap.onFailure(e);
-                }
+
+                    @Override
+                    protected void doRun() {
+                        while (iterator.hasNext()) {
+                            final SparseFileTracker.Gap gap = iterator.next();
+                            try {
+                                try (Closeable ignored = tryFileLock()) {
+                                    writer.write(channel, gap.start, gap.end, gap::onProgress);
+                                }
+                                gap.onCompletion();
+                            } catch (Exception e) {
+                                gap.onFailure(e);
+                            } finally {
+                                iterator.remove();
+                            }
+                        }
+                    }
+                });
             }
             return future.get();
         } catch (InterruptedException | ExecutionException e) {
             throw new UncheckedIOException(new IOException(e));
-        } finally {
-            if (releaseLock) {
-                lockRefCount.decRef();
-            }
         }
-    }
-
-    CompletableFuture<Integer> fetchRange(
-        long start,
-        long end,
-        CheckedBiFunction<Long, Long, Integer, IOException> onRangeAvailable,
-        CheckedBiConsumer<Long, Long, IOException> onRangeMissing
-    ) {
-        final CompletableFuture<Integer> future = new CompletableFuture<>();
-        try {
-            if (start < 0 || start > tracker.getLength() || start > end || end > tracker.getLength()) {
-                throw new IllegalArgumentException(
-                    "Invalid range [start=" + start + ", end=" + end + "] for length [" + tracker.getLength() + ']'
-                );
-            }
-            ensureOpen();
-            final List<SparseFileTracker.Gap> gaps = tracker.waitForRange(
-                start,
-                end,
-                ActionListener.wrap(
-                    rangeReady -> future.complete(onRangeAvailable.apply(start, end)),
-                    rangeFailure -> future.completeExceptionally(rangeFailure)
-                )
-            );
-
-            for (SparseFileTracker.Gap gap : gaps) {
-                try {
-                    ensureOpen();
-                    onRangeMissing.accept(gap.start, gap.end);
-                    gap.onCompletion();
-                } catch (Exception e) {
-                    gap.onFailure(e);
-                }
-            }
-        } catch (Exception e) {
-            future.completeExceptionally(e);
-        }
-        return future;
     }
 
     public Tuple<Long, Long> getAbsentRangeWithin(long start, long end) {

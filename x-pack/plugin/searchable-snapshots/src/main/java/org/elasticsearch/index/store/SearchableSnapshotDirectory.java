@@ -512,6 +512,10 @@ public class SearchableSnapshotDirectory extends BaseDirectory {
         return threadPool.executor(SEARCHABLE_SNAPSHOTS_THREAD_POOL_NAME);
     }
 
+    public Executor generic() {
+        return threadPool.generic();
+    }
+
     /**
      * A {@link FilterBlobContainer} that uses {@link BlobStoreRepository#maybeRateLimitRestores(InputStream)} to limit the rate at which
      * blobs are read from the repository.

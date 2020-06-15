@@ -53,10 +53,11 @@ public class ProgressListenableActionFuture<T> extends AdapterActionFuture<T, T>
             this.current = value;
             final Iterator<Tuple<Long, ActionListener<T>>> iterator = this.listeners.iterator();
             while (iterator.hasNext()) {
-                Tuple<Long, ActionListener<T>> tuple = iterator.next();
+                final Tuple<Long, ActionListener<T>> tuple = iterator.next();
                 if (tuple.v1() <= this.current) {
-                    iterator.remove();
                     listeners.add(tuple.v2());
+                    iterator.remove();
+                    System.out.println(">>> releasing at " + tuple.v1() + " / " + this.end);
                 }
             }
             assert this.listeners.stream().allMatch(listener -> this.current < listener.v1());
