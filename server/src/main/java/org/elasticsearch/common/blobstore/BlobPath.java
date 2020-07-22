@@ -22,6 +22,7 @@ package org.elasticsearch.common.blobstore;
 import org.elasticsearch.common.Nullable;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
@@ -37,6 +38,10 @@ public class BlobPath implements Iterable<String> {
 
     public BlobPath() {
         this.paths = Collections.emptyList();
+    }
+
+    public BlobPath(String path) {
+        this.paths = path == null || path.isEmpty() ? Collections.emptyList() : Arrays.asList(path.split(SEPARATOR));
     }
 
     public static BlobPath cleanPath() {

@@ -33,7 +33,7 @@ import java.util.stream.Collectors;
 
 public abstract class FilterBlobContainer implements BlobContainer {
 
-    private final BlobContainer delegate;
+    protected final BlobContainer delegate;
 
     public FilterBlobContainer(BlobContainer delegate) {
         this.delegate = Objects.requireNonNull(delegate);

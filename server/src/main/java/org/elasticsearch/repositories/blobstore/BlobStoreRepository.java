@@ -178,7 +178,7 @@ public abstract class BlobStoreRepository extends AbstractLifecycleComponent imp
 
     private static final String SNAPSHOT_INDEX_NAME_FORMAT = SNAPSHOT_INDEX_PREFIX + "%s";
 
-    private static final String UPLOADED_DATA_BLOB_PREFIX = "__";
+    public static final String UPLOADED_DATA_BLOB_PREFIX = "__";
 
     /**
      * Prefix used for the identifiers of data blobs that were not actually written to the repository physically because their contents are

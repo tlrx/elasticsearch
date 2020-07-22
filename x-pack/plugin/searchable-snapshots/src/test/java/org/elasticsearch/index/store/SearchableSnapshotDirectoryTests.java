@@ -712,7 +712,7 @@ public class SearchableSnapshotDirectoryTests extends ESTestCase {
             final IndexSettings indexSettings = new IndexSettings(IndexMetadata.builder("test").settings(settings).build(), Settings.EMPTY);
             expectThrows(
                 IllegalArgumentException.class,
-                () -> SearchableSnapshotDirectory.create(null, null, indexSettings, null, null, null)
+                () -> SearchableSnapshotDirectory.create(null, null, null, indexSettings, null, null, null)
             );
         }
     }

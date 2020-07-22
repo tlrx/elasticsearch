@@ -20,6 +20,8 @@ import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.ActionRunnable;
 import org.elasticsearch.action.support.GroupedActionListener;
+import org.elasticsearch.blobstore.cache.BlobStoreCacheService;
+import org.elasticsearch.blobstore.cache.CachedBlobContainer;
 import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.common.CheckedRunnable;
 import org.elasticsearch.common.Nullable;
@@ -68,11 +70,13 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 
 import static org.apache.lucene.store.BufferedIndexInput.bufferSize;
 import static org.elasticsearch.index.IndexModule.INDEX_STORE_TYPE_SETTING;
+import static org.elasticsearch.xpack.searchablesnapshots.SearchableSnapshots.SNAPSHOT_BLOB_STORE_CACHE_ENABLED_SETTING;
 import static org.elasticsearch.xpack.searchablesnapshots.SearchableSnapshots.SNAPSHOT_CACHE_ENABLED_SETTING;
 import static org.elasticsearch.xpack.searchablesnapshots.SearchableSnapshots.SNAPSHOT_CACHE_EXCLUDED_FILE_TYPES_SETTING;
 import static org.elasticsearch.xpack.searchablesnapshots.SearchableSnapshots.SNAPSHOT_CACHE_PREWARM_ENABLED_SETTING;
@@ -444,6 +448,7 @@ public class SearchableSnapshotDirectory extends BaseDirectory {
 
     public static Directory create(
         RepositoriesService repositories,
+        BlobStoreCacheService blobStoreCacheService,
         CacheService cache,
         IndexSettings indexSettings,
         ShardPath shardPath,
@@ -476,7 +481,8 @@ public class SearchableSnapshotDirectory extends BaseDirectory {
             );
         }
 
-        final Repository repository = repositories.repository(SNAPSHOT_REPOSITORY_SETTING.get(indexSettings.getSettings()));
+        final String repositoryName = SNAPSHOT_REPOSITORY_SETTING.get(indexSettings.getSettings());
+        final Repository repository = repositories.repository(repositoryName);
         if (repository instanceof BlobStoreRepository == false) {
             throw new IllegalArgumentException("Repository [" + repository + "] is not searchable");
         }
@@ -488,15 +494,20 @@ public class SearchableSnapshotDirectory extends BaseDirectory {
             SNAPSHOT_SNAPSHOT_ID_SETTING.get(indexSettings.getSettings())
         );
 
-        final LazyInitializable<BlobContainer, RuntimeException> lazyBlobContainer = new LazyInitializable<>(
-            () -> new RateLimitingBlobContainer(
-                blobStoreRepository,
-                blobStoreRepository.shardContainer(indexId, shardPath.getShardId().id())
-            )
-        );
-        final LazyInitializable<BlobStoreIndexShardSnapshot, RuntimeException> lazySnapshot = new LazyInitializable<>(
-            () -> blobStoreRepository.loadShardSnapshot(lazyBlobContainer.getOrCompute(), snapshotId)
-        );
+        final AtomicReference<BlobStoreIndexShardSnapshot> snapshotReference = new AtomicReference<>();
+        final LazyInitializable<BlobContainer, RuntimeException> lazyBlobContainer = new LazyInitializable<>(() -> {
+            BlobContainer blobContainer = blobStoreRepository.shardContainer(indexId, shardPath.getShardId().id());
+            if (SNAPSHOT_BLOB_STORE_CACHE_ENABLED_SETTING.get(indexSettings.getSettings())) {
+                blobContainer = new CachedBlobContainer(repositoryName, snapshotReference::get, blobStoreCacheService, blobContainer);
+            }
+            return new RateLimitingBlobContainer(blobStoreRepository, blobContainer);
+        });
+        final LazyInitializable<BlobStoreIndexShardSnapshot, RuntimeException> lazySnapshot = new LazyInitializable<>(() -> {
+            final BlobStoreIndexShardSnapshot current = blobStoreRepository.loadShardSnapshot(lazyBlobContainer.getOrCompute(), snapshotId);
+            BlobStoreIndexShardSnapshot previous = snapshotReference.getAndSet(current);
+            assert previous == null;
+            return current;
+        });
 
         final Path cacheDir = CacheService.getShardCachePath(shardPath).resolve(snapshotId.getUUID());
         Files.createDirectories(cacheDir);
