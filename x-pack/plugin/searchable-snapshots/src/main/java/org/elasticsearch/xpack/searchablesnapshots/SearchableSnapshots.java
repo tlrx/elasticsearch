@@ -10,7 +10,9 @@ import org.elasticsearch.action.ActionRequest;
 import org.elasticsearch.action.ActionResponse;
 import org.elasticsearch.blobstore.cache.BlobStoreCacheService;
 import org.elasticsearch.client.Client;
+import org.elasticsearch.client.node.NodeClient;
 import org.elasticsearch.cluster.metadata.IndexNameExpressionResolver;
+import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.node.DiscoveryNodes;
 import org.elasticsearch.cluster.routing.allocation.ExistingShardsAllocator;
 import org.elasticsearch.cluster.routing.allocation.decider.AllocationDecider;
@@ -59,7 +61,9 @@ import org.elasticsearch.xpack.searchablesnapshots.action.ClearSearchableSnapsho
 import org.elasticsearch.xpack.searchablesnapshots.action.SearchableSnapshotsStatsAction;
 import org.elasticsearch.xpack.searchablesnapshots.action.TransportClearSearchableSnapshotsCacheAction;
 import org.elasticsearch.xpack.searchablesnapshots.action.TransportMountSearchableSnapshotAction;
+import org.elasticsearch.xpack.searchablesnapshots.action.TransportNodesListSearchableSnapshotsCaches;
 import org.elasticsearch.xpack.searchablesnapshots.action.TransportSearchableSnapshotsStatsAction;
+import org.elasticsearch.xpack.searchablesnapshots.cache.CacheIndexService;
 import org.elasticsearch.xpack.searchablesnapshots.cache.CacheService;
 import org.elasticsearch.xpack.searchablesnapshots.cache.NodeEnvironmentCacheCleaner;
 import org.elasticsearch.xpack.searchablesnapshots.rest.RestClearSearchableSnapshotsCacheAction;
@@ -129,6 +133,14 @@ public class SearchableSnapshots extends Plugin implements IndexStorePlugin, Eng
         Setting.Property.IndexScope,
         Setting.Property.NotCopyableOnResize
     );
+    public static final Setting<TimeValue> SNAPSHOT_CACHE_SYNC_INTERVAL_SETTING = Setting.timeSetting(
+        "index.store.snapshot.cache.sync_interval",
+        TimeValue.timeValueSeconds(3),
+        TimeValue.timeValueSeconds(3),
+        Setting.Property.IndexScope,
+        Setting.Property.Dynamic,
+        Setting.Property.NotCopyableOnResize
+    );
     // The file extensions that are excluded from the cache
     public static final Setting<List<String>> SNAPSHOT_CACHE_EXCLUDED_FILE_TYPES_SETTING = Setting.listSetting(
         "index.store.snapshot.cache.excluded_file_types",
@@ -150,6 +162,7 @@ public class SearchableSnapshots extends Plugin implements IndexStorePlugin, Eng
     private final SetOnce<BlobStoreCacheService> blobStoreCacheService = new SetOnce<>();
     private final SetOnce<CacheService> cacheService = new SetOnce<>();
     private final SetOnce<ThreadPool> threadPool = new SetOnce<>();
+    private final SetOnce<SearchableSnapshotAllocator> allocator = new SetOnce<>();
     private final SetOnce<FailShardsOnInvalidLicenseClusterListener> failShardsListener = new SetOnce<>();
     private final Settings settings;
 
@@ -173,10 +186,12 @@ public class SearchableSnapshots extends Plugin implements IndexStorePlugin, Eng
             SNAPSHOT_INDEX_ID_SETTING,
             SNAPSHOT_CACHE_ENABLED_SETTING,
             SNAPSHOT_CACHE_PREWARM_ENABLED_SETTING,
+            SNAPSHOT_CACHE_SYNC_INTERVAL_SETTING,
             SNAPSHOT_CACHE_EXCLUDED_FILE_TYPES_SETTING,
             SNAPSHOT_UNCACHED_CHUNK_SIZE_SETTING,
             CacheService.SNAPSHOT_CACHE_SIZE_SETTING,
-            CacheService.SNAPSHOT_CACHE_RANGE_SIZE_SETTING
+            CacheService.SNAPSHOT_CACHE_RANGE_SIZE_SETTING,
+            CacheIndexService.CACHE_INDEX_INTERVAL_SETTING
         );
     }
 
@@ -195,6 +210,14 @@ public class SearchableSnapshots extends Plugin implements IndexStorePlugin, Eng
         final Supplier<RepositoriesService> repositoriesServiceSupplier
     ) {
         final CacheService cacheService = new CacheService(new NodeEnvironmentCacheCleaner(nodeEnvironment), settings);
+        final CacheIndexService cacheIndexService = new CacheIndexService(
+            environment,
+            nodeEnvironment,
+            settings,
+            clusterService,
+            threadPool,
+            cacheService
+        );
         this.cacheService.set(cacheService);
         this.repositoriesServiceSupplier = repositoriesServiceSupplier;
         this.threadPool.set(threadPool);
@@ -206,7 +229,12 @@ public class SearchableSnapshots extends Plugin implements IndexStorePlugin, Eng
         );
         this.blobStoreCacheService.set(blobStoreCacheService);
         this.failShardsListener.set(new FailShardsOnInvalidLicenseClusterListener(getLicenseState(), clusterService.getRerouteService()));
-        return List.of(cacheService, blobStoreCacheService);
+        assert client instanceof NodeClient;
+        this.allocator.set(new SearchableSnapshotAllocator((NodeClient) client));
+        if (DiscoveryNode.isDataNode(settings)) {
+            clusterService.addListener(cacheIndexService);
+        }
+        return List.of(cacheService, blobStoreCacheService, cacheIndexService);
     }
 
     @Override
@@ -263,7 +291,8 @@ public class SearchableSnapshots extends Plugin implements IndexStorePlugin, Eng
             new ActionHandler<>(ClearSearchableSnapshotsCacheAction.INSTANCE, TransportClearSearchableSnapshotsCacheAction.class),
             new ActionHandler<>(MountSearchableSnapshotAction.INSTANCE, TransportMountSearchableSnapshotAction.class),
             new ActionHandler<>(XPackUsageFeatureAction.SEARCHABLE_SNAPSHOTS, SearchableSnapshotsUsageTransportAction.class),
-            new ActionHandler<>(XPackInfoFeatureAction.SEARCHABLE_SNAPSHOTS, SearchableSnapshotsInfoTransportAction.class)
+            new ActionHandler<>(XPackInfoFeatureAction.SEARCHABLE_SNAPSHOTS, SearchableSnapshotsInfoTransportAction.class),
+            new ActionHandler<>(TransportNodesListSearchableSnapshotsCaches.TYPE, TransportNodesListSearchableSnapshotsCaches.class)
         );
     }
 
@@ -285,7 +314,7 @@ public class SearchableSnapshots extends Plugin implements IndexStorePlugin, Eng
 
     @Override
     public Map<String, ExistingShardsAllocator> getExistingShardsAllocators() {
-        return Map.of(SearchableSnapshotAllocator.ALLOCATOR_NAME, new SearchableSnapshotAllocator());
+        return Map.of(SearchableSnapshotAllocator.ALLOCATOR_NAME, allocator.get());
     }
 
     // overridable by tests

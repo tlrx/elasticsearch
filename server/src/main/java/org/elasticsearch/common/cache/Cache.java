@@ -650,6 +650,28 @@ public class Cache<K, V> {
         };
     }
 
+    public Iterable<Tuple<K, V>> entries() {
+        return () -> new Iterator<>() {
+            private final CacheIterator iterator = new CacheIterator(head);
+
+            @Override
+            public boolean hasNext() {
+                return iterator.hasNext();
+            }
+
+            @Override
+            public Tuple<K, V> next() {
+                final Cache.Entry<K, V> next = iterator.next();
+                return Tuple.tuple(next.key, next.value);
+            }
+
+            @Override
+            public void remove() {
+                iterator.remove();
+            }
+        };
+    }
+
     private class CacheIterator implements Iterator<Entry<K, V>> {
         private Entry<K, V> current;
         private Entry<K, V> next;

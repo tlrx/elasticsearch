@@ -49,6 +49,22 @@ public class SparseFileTracker {
         return length;
     }
 
+    public List<Tuple<Long, Long>> getCompletedRanges() {
+        List<Tuple<Long, Long>> completedRanges = null;
+        synchronized (mutex) {
+            for (Range range : ranges) {
+                if (range.isPending()) {
+                    continue;
+                }
+                if (completedRanges == null) {
+                    completedRanges = new ArrayList<>();
+                }
+                completedRanges.add(Tuple.tuple(range.start, range.end));
+            }
+        }
+        return completedRanges;
+    }
+
     /**
      * @return the sum of the length of the ranges
      */

@@ -32,9 +32,9 @@ import org.elasticsearch.common.blobstore.support.FilterBlobContainer;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.collect.Tuple;
 import org.elasticsearch.common.lucene.store.ByteArrayIndexInput;
-import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.util.LazyInitializable;
+import org.elasticsearch.common.util.concurrent.AbstractAsyncTask;
 import org.elasticsearch.common.util.concurrent.ConcurrentCollections;
 import org.elasticsearch.core.internal.io.IOUtils;
 import org.elasticsearch.index.IndexSettings;
@@ -61,7 +61,6 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
-import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Collection;
@@ -80,10 +79,12 @@ import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 
 import static org.apache.lucene.store.BufferedIndexInput.bufferSize;
+import static org.elasticsearch.common.unit.TimeValue.ZERO;
 import static org.elasticsearch.index.IndexModule.INDEX_STORE_TYPE_SETTING;
 import static org.elasticsearch.xpack.searchablesnapshots.SearchableSnapshots.SNAPSHOT_CACHE_ENABLED_SETTING;
 import static org.elasticsearch.xpack.searchablesnapshots.SearchableSnapshots.SNAPSHOT_CACHE_EXCLUDED_FILE_TYPES_SETTING;
 import static org.elasticsearch.xpack.searchablesnapshots.SearchableSnapshots.SNAPSHOT_CACHE_PREWARM_ENABLED_SETTING;
+import static org.elasticsearch.xpack.searchablesnapshots.SearchableSnapshots.SNAPSHOT_CACHE_SYNC_INTERVAL_SETTING;
 import static org.elasticsearch.xpack.searchablesnapshots.SearchableSnapshots.SNAPSHOT_INDEX_ID_SETTING;
 import static org.elasticsearch.xpack.searchablesnapshots.SearchableSnapshots.SNAPSHOT_INDEX_NAME_SETTING;
 import static org.elasticsearch.xpack.searchablesnapshots.SearchableSnapshots.SNAPSHOT_REPOSITORY_SETTING;
@@ -125,6 +126,7 @@ public class SearchableSnapshotDirectory extends BaseDirectory {
     private final Set<String> excludedFileTypes;
     private final long uncachedChunkSize; // if negative use BlobContainer#readBlobPreferredLength, see #getUncachedChunkSize()
     private final Path cacheDir;
+    private final CacheFilesSyncer cacheSyncer;
     private final ShardPath shardPath;
     private final AtomicBoolean closed;
 
@@ -142,7 +144,7 @@ public class SearchableSnapshotDirectory extends BaseDirectory {
         SnapshotId snapshotId,
         IndexId indexId,
         ShardId shardId,
-        Settings indexSettings,
+        IndexSettings indexSettings,
         LongSupplier currentTimeNanosSupplier,
         CacheService cacheService,
         Path cacheDir,
@@ -163,13 +165,16 @@ public class SearchableSnapshotDirectory extends BaseDirectory {
         this.cacheDir = Objects.requireNonNull(cacheDir);
         this.shardPath = Objects.requireNonNull(shardPath);
         this.closed = new AtomicBoolean(false);
-        this.useCache = SNAPSHOT_CACHE_ENABLED_SETTING.get(indexSettings);
-        this.prewarmCache = useCache ? SNAPSHOT_CACHE_PREWARM_ENABLED_SETTING.get(indexSettings) : false;
-        this.excludedFileTypes = new HashSet<>(SNAPSHOT_CACHE_EXCLUDED_FILE_TYPES_SETTING.get(indexSettings));
-        this.uncachedChunkSize = SNAPSHOT_UNCACHED_CHUNK_SIZE_SETTING.get(indexSettings).getBytes();
+        this.useCache = SNAPSHOT_CACHE_ENABLED_SETTING.get(indexSettings.getSettings());
+        this.prewarmCache = useCache ? SNAPSHOT_CACHE_PREWARM_ENABLED_SETTING.get(indexSettings.getSettings()) : false;
+        this.excludedFileTypes = new HashSet<>(SNAPSHOT_CACHE_EXCLUDED_FILE_TYPES_SETTING.get(indexSettings.getSettings()));
+        this.uncachedChunkSize = SNAPSHOT_UNCACHED_CHUNK_SIZE_SETTING.get(indexSettings.getSettings()).getBytes();
         this.blobStoreCachePath = String.join("/", snapshotId.getUUID(), indexId.getId(), String.valueOf(shardId.id()));
         this.threadPool = threadPool;
         this.loaded = false;
+        final TimeValue cacheSyncInterval = useCache ? SNAPSHOT_CACHE_SYNC_INTERVAL_SETTING.get(indexSettings.getSettings()) : ZERO;
+        this.cacheSyncer = new CacheFilesSyncer(threadPool, cacheSyncInterval);
+        indexSettings.getScopedSettings().addSettingsUpdateConsumer(SNAPSHOT_CACHE_SYNC_INTERVAL_SETTING, this::setCacheSyncInterval);
         assert invariant();
     }
 
@@ -215,6 +220,7 @@ public class SearchableSnapshotDirectory extends BaseDirectory {
                     cleanExistingRegularShardFiles();
                     this.recoveryState = (SearchableSnapshotRecoveryState) recoveryState;
                     prewarmCache();
+                    this.cacheSyncer.rescheduleIfNecessary();
                 }
             }
         }
@@ -244,6 +250,10 @@ public class SearchableSnapshotDirectory extends BaseDirectory {
         assert files != null;
         assert files.size() > 0;
         return files;
+    }
+
+    private void setCacheSyncInterval(TimeValue cacheSyncInterval) {
+        cacheSyncer.setInterval(cacheSyncInterval);
     }
 
     public SnapshotId getSnapshotId() {
@@ -301,6 +311,20 @@ public class SearchableSnapshotDirectory extends BaseDirectory {
         throw unsupportedException();
     }
 
+    public synchronized void syncCacheFiles() {
+        logger.debug("{} flushing cache files", shardId);
+        final long start = threadPool.relativeTimeInNanos();
+        cacheService.forEachCacheFile(cacheKey -> cacheKey.belongsTo(snapshotId, indexId, shardId), (cacheKey, cacheFile) -> {
+            try {
+                cacheFile.sync();
+            } catch (IOException e) {
+                logger.warn(() -> new ParameterizedMessage("failed to flush cache file [{}]", cacheFile.getFile()), e);
+            }
+        });
+        final long end = threadPool.relativeTimeInNanos() - start;
+        logger.debug("{} cache files flushed in [{}]", shardId, TimeValue.nsecToMSec(end));
+    }
+
     @Override
     public void deleteFile(String name) {
         throw unsupportedException();
@@ -330,9 +354,6 @@ public class SearchableSnapshotDirectory extends BaseDirectory {
     public final void close() {
         if (closed.compareAndSet(false, true)) {
             isOpen = false;
-            // Ideally we could let the cache evict/remove cached files by itself after the
-            // directory has been closed.
-            clearCache();
         }
     }
 
@@ -563,7 +584,6 @@ public class SearchableSnapshotDirectory extends BaseDirectory {
 
         final Path cacheDir = CacheService.getShardCachePath(shardPath).resolve(snapshotId.getUUID());
         Files.createDirectories(cacheDir);
-        assert assertCacheIsEmpty(cacheDir);
 
         return new InMemoryNoOpCommitDirectory(
             new SearchableSnapshotDirectory(
@@ -574,7 +594,7 @@ public class SearchableSnapshotDirectory extends BaseDirectory {
                 snapshotId,
                 indexId,
                 shardPath.getShardId(),
-                indexSettings.getSettings(),
+                indexSettings,
                 currentTimeNanosSupplier,
                 cache,
                 cacheDir,
@@ -582,17 +602,6 @@ public class SearchableSnapshotDirectory extends BaseDirectory {
                 threadPool
             )
         );
-    }
-
-    private static boolean assertCacheIsEmpty(Path cacheDir) {
-        try (DirectoryStream<Path> cacheDirStream = Files.newDirectoryStream(cacheDir)) {
-            final Set<Path> cacheFiles = new HashSet<>();
-            cacheDirStream.forEach(cacheFiles::add);
-            assert cacheFiles.isEmpty() : "should start with empty cache, but found " + cacheFiles;
-        } catch (IOException e) {
-            assert false : e;
-        }
-        return true;
     }
 
     public static SearchableSnapshotDirectory unwrapDirectory(Directory dir) {
@@ -647,6 +656,38 @@ public class SearchableSnapshotDirectory extends BaseDirectory {
         @Override
         public InputStream readBlob(String blobName, long position, long length) throws IOException {
             return blobStoreRepository.maybeRateLimitRestores(super.readBlob(blobName, position, length));
+        }
+    }
+
+    /**
+     * Periodically try to sync cache files that belong to this directory.
+     */
+    class CacheFilesSyncer extends AbstractAsyncTask {
+
+        CacheFilesSyncer(ThreadPool threadPool, TimeValue syncInterval) {
+            super(logger, threadPool, syncInterval, true);
+        }
+
+        @Override
+        protected boolean mustReschedule() {
+            return isClosed() == false;
+        }
+
+        @Override
+        public void runInternal() {
+            if (isClosed() == false) {
+                syncCacheFiles();
+            }
+        }
+
+        @Override
+        protected String getThreadPool() {
+            return ThreadPool.Names.GENERIC;
+        }
+
+        @Override
+        public String toString() {
+            return "periodic_cache_files_sync";
         }
     }
 }

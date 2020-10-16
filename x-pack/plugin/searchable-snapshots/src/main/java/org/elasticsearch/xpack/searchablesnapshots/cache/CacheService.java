@@ -8,6 +8,7 @@ package org.elasticsearch.xpack.searchablesnapshots.cache;
 import org.elasticsearch.common.UUIDs;
 import org.elasticsearch.common.cache.Cache;
 import org.elasticsearch.common.cache.CacheBuilder;
+import org.elasticsearch.common.collect.Tuple;
 import org.elasticsearch.common.component.AbstractLifecycleComponent;
 import org.elasticsearch.common.component.Lifecycle;
 import org.elasticsearch.common.settings.Setting;
@@ -22,6 +23,7 @@ import org.elasticsearch.index.store.cache.CacheKey;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Objects;
+import java.util.function.BiConsumer;
 import java.util.function.Predicate;
 
 import static org.elasticsearch.xpack.searchablesnapshots.SearchableSnapshotsConstants.toIntBytes;
@@ -32,7 +34,7 @@ import static org.elasticsearch.xpack.searchablesnapshots.SearchableSnapshotsCon
  */
 public class CacheService extends AbstractLifecycleComponent {
 
-    private static final String SETTINGS_PREFIX = "xpack.searchable.snapshot.cache.";
+    static final String SETTINGS_PREFIX = "xpack.searchable.snapshot.cache.";
 
     public static final Setting<ByteSizeValue> SNAPSHOT_CACHE_SIZE_SETTING = Setting.byteSizeSetting(
         SETTINGS_PREFIX + "size",
@@ -79,12 +81,12 @@ public class CacheService extends AbstractLifecycleComponent {
 
     @Override
     protected void doStart() {
-        cacheCleaner.run();
+        // cacheCleaner.run();
     }
 
     @Override
     protected void doStop() {
-        cache.invalidateAll();
+        // cache.invalidateAll();
     }
 
     @Override
@@ -126,17 +128,30 @@ public class CacheService extends AbstractLifecycleComponent {
         });
     }
 
+    public void put(final CacheKey cacheKey, final long fileLength, final Path path, final long[] ranges) throws Exception {
+        ensureLifecycleStarted();
+        cache.computeIfAbsent(cacheKey, key -> {
+            ensureLifecycleStarted();
+            assert Files.exists(path) : "cache file does not exists " + path;
+
+            return new CacheFile(key.toString(), fileLength, path, ranges);
+        });
+    }
+
     /**
      * Invalidate cache entries with keys matching the given predicate
      *
      * @param predicate the predicate to evaluate
      */
     public void removeFromCache(final Predicate<CacheKey> predicate) {
-        for (CacheKey cacheKey : cache.keys()) {
-            if (predicate.test(cacheKey)) {
-                cache.invalidate(cacheKey);
+        forEachCacheFile(predicate, cache::invalidate);
+    }
+
+    public void forEachCacheFile(final Predicate<CacheKey> predicate, BiConsumer<CacheKey, CacheFile> consumer) {
+        for (Tuple<CacheKey, CacheFile> entry : cache.entries()) {
+            if (predicate.test(entry.v1())) {
+                consumer.accept(entry.v1(), entry.v2());
             }
         }
-        cache.refresh();
     }
 }

@@ -62,7 +62,7 @@ public abstract class BaseSearchableSnapshotsIntegTestCase extends AbstractSnaps
         final Settings.Builder builder = Settings.builder()
             .put(super.nodeSettings(nodeOrdinal))
             .put(SELF_GENERATED_LICENSE_TYPE.getKey(), "trial");
-        if (randomBoolean()) {
+        if (randomCacheSize() && randomBoolean()) {
             builder.put(
                 CacheService.SNAPSHOT_CACHE_SIZE_SETTING.getKey(),
                 rarely()
@@ -72,7 +72,7 @@ public abstract class BaseSearchableSnapshotsIntegTestCase extends AbstractSnaps
                     : new ByteSizeValue(randomIntBetween(1, 10), ByteSizeUnit.MB)
             );
         }
-        if (randomBoolean()) {
+        if (randomCacheRangeSize() && randomBoolean()) {
             builder.put(
                 CacheService.SNAPSHOT_CACHE_RANGE_SIZE_SETTING.getKey(),
                 rarely()
@@ -81,6 +81,14 @@ public abstract class BaseSearchableSnapshotsIntegTestCase extends AbstractSnaps
             );
         }
         return builder.build();
+    }
+
+    protected boolean randomCacheSize() {
+        return true;
+    }
+
+    protected boolean randomCacheRangeSize() {
+        return true;
     }
 
     protected String mountSnapshot(String repositoryName, String snapshotName, String indexName, Settings restoredIndexSettings)
