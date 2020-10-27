@@ -13,6 +13,7 @@ import org.elasticsearch.common.lease.Releasable;
 import org.elasticsearch.common.lease.Releasables;
 import org.elasticsearch.common.util.concurrent.AbstractRefCounted;
 import org.elasticsearch.common.util.concurrent.AbstractRunnable;
+import org.elasticsearch.common.util.concurrent.RefCounted;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -28,6 +29,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 public class CacheFile {
@@ -43,22 +45,61 @@ public class CacheFile {
         StandardOpenOption.CREATE,
         StandardOpenOption.SPARSE };
 
+    private class FileRefCounted implements RefCounted {
+
+        private final AtomicInteger refCount = new AtomicInteger(1);
+
+        @Override
+        public void incRef() {
+            if (tryIncRef() == false) {
+                throw new IllegalStateException("File is already closed can't increment refCount current count [" + refCount.get() + "]");
+            }
+        }
+
+        @Override
+        public boolean tryIncRef() {
+            do {
+                int i = refCount.get();
+                if (i > 0) {
+                    if (refCount.compareAndSet(i, i + 1)) {
+                        return true;
+                    }
+                } else {
+                    return false;
+                }
+            } while (true);
+        }
+
+        @Override
+        public void decRef() {
+            decRefAndMaybeReleased();
+        }
+
+        public boolean decRefAndMaybeReleased() {
+            final int i = refCount.decrementAndGet();
+            assert i >= 0;
+            if (i == 0) {
+                assert assertEvictedWithoutPendingListeners();
+                try {
+                    Files.deleteIfExists(file);
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            }
+            return i == 0;
+        }
+
+        public int refCount() {
+            return this.refCount.get();
+        }
+    }
+
     /**
      * Reference counter that counts the number of eviction listeners referencing this cache file plus the number of open file channels
      * for it. Once this instance has been evicted, all listeners notified and all {@link FileChannelReference} for it released,
      * it makes sure to delete the physical file backing this cache.
      */
-    private final AbstractRefCounted refCounter = new AbstractRefCounted("CacheFile") {
-        @Override
-        protected void closeInternal() {
-            assert assertNoPendingListeners();
-            try {
-                Files.deleteIfExists(file);
-            } catch (IOException e) {
-                throw new UncheckedIOException(e);
-            }
-        }
-    };
+    private final FileRefCounted refCounter = new FileRefCounted();
 
     private final SparseFileTracker tracker;
     private final String description;
@@ -95,7 +136,8 @@ public class CacheFile {
             } catch (IOException e) {
                 throw new UncheckedIOException(e);
             } finally {
-                refCounter.decRef();
+                final boolean released = refCounter.decRefAndMaybeReleased();
+                assert released == false || Files.notExists(file);
             }
         }
     }
@@ -183,10 +225,11 @@ public class CacheFile {
         assert invariant();
     }
 
-    private boolean assertNoPendingListeners() {
+    private boolean assertEvictedWithoutPendingListeners() {
         synchronized (listeners) {
             assert listeners.isEmpty();
             assert channelRef == null;
+            assert evicted.get();
         }
         return true;
     }
@@ -210,7 +253,6 @@ public class CacheFile {
         synchronized (listeners) {
             if (listeners.isEmpty()) {
                 assert channelRef == null;
-                assert evicted.get() == false || refCounter.refCount() != 0 || Files.notExists(file);
             } else {
                 assert channelRef != null;
                 assert refCounter.refCount() > 0;
