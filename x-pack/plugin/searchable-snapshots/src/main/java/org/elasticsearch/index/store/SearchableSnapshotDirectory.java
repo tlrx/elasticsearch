@@ -61,7 +61,6 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
-import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Collection;
@@ -330,9 +329,6 @@ public class SearchableSnapshotDirectory extends BaseDirectory {
     public final void close() {
         if (closed.compareAndSet(false, true)) {
             isOpen = false;
-            // Ideally we could let the cache evict/remove cached files by itself after the
-            // directory has been closed.
-            clearCache();
         }
     }
 
@@ -563,7 +559,6 @@ public class SearchableSnapshotDirectory extends BaseDirectory {
 
         final Path cacheDir = CacheService.getShardCachePath(shardPath).resolve(snapshotId.getUUID());
         Files.createDirectories(cacheDir);
-        assert assertCacheIsEmpty(cacheDir);
 
         return new InMemoryNoOpCommitDirectory(
             new SearchableSnapshotDirectory(
@@ -582,17 +577,6 @@ public class SearchableSnapshotDirectory extends BaseDirectory {
                 threadPool
             )
         );
-    }
-
-    private static boolean assertCacheIsEmpty(Path cacheDir) {
-        try (DirectoryStream<Path> cacheDirStream = Files.newDirectoryStream(cacheDir)) {
-            final Set<Path> cacheFiles = new HashSet<>();
-            cacheDirStream.forEach(cacheFiles::add);
-            assert cacheFiles.isEmpty() : "should start with empty cache, but found " + cacheFiles;
-        } catch (IOException e) {
-            assert false : e;
-        }
-        return true;
     }
 
     public static SearchableSnapshotDirectory unwrapDirectory(Directory dir) {
