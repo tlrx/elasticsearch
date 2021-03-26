@@ -206,6 +206,10 @@ public class EsExecutors {
         return new EsThreadFactory(namePrefix);
     }
 
+    public static ThreadFactory daemonSearchThreadFactory(String namePrefix) {
+        return new EsSearchThreadFactory(namePrefix);
+    }
+
     static class EsThreadFactory implements ThreadFactory {
 
         final ThreadGroup group;
@@ -215,19 +219,32 @@ public class EsExecutors {
         EsThreadFactory(String namePrefix) {
             this.namePrefix = namePrefix;
             SecurityManager s = System.getSecurityManager();
-            group = (s != null) ? s.getThreadGroup() :
-                    Thread.currentThread().getThreadGroup();
+            group = (s != null) ? s.getThreadGroup() : Thread.currentThread().getThreadGroup();
         }
 
         @Override
-        public Thread newThread(Runnable r) {
-            Thread t = new Thread(group, r,
-                    namePrefix + "[T#" + threadNumber.getAndIncrement() + "]",
-                    0);
-            t.setDaemon(true);
-            return t;
+        public final Thread newThread(Runnable r) {
+            final String name = namePrefix + "[T#" + threadNumber.getAndIncrement() + ']';
+            final Thread thread = create(group, name, r);
+            thread.setDaemon(true);
+            return thread;
         }
 
+        protected Thread create(ThreadGroup group, String name, Runnable runnable) {
+            return new Thread(group, runnable, name, 0L);
+        }
+    }
+
+    static class EsSearchThreadFactory extends EsThreadFactory {
+
+        EsSearchThreadFactory(String namePrefix) {
+            super(namePrefix);
+        }
+
+        @Override
+        protected Thread create(ThreadGroup group, String name, Runnable runnable) {
+            return new SearchThread(group, runnable, name, 0L);
+        }
     }
 
     /**

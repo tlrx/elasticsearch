@@ -41,6 +41,7 @@ import org.elasticsearch.index.engine.Engine;
 import org.elasticsearch.index.engine.EngineFactory;
 import org.elasticsearch.index.engine.FrozenEngine;
 import org.elasticsearch.index.engine.ReadOnlyEngine;
+import org.elasticsearch.xpack.searchablesnapshots.store.ProfilingSearchOperationListener;
 import org.elasticsearch.xpack.searchablesnapshots.store.SearchableSnapshotDirectory;
 import org.elasticsearch.index.store.Store;
 import org.elasticsearch.index.translog.Translog;
@@ -358,7 +359,7 @@ public class SearchableSnapshots extends Plugin implements IndexStorePlugin, Eng
                 new SearchableSnapshotIndexEventListener(settings, cacheService.get(), frozenCacheService.get())
             );
             indexModule.addIndexEventListener(failShardsListener.get());
-
+            indexModule.addSearchOperationListener(new ProfilingSearchOperationListener());
             indexModule.addSettingsUpdateConsumer(IndexMetadata.INDEX_BLOCKS_WRITE_SETTING, s -> {}, write -> {
                 if (write == false) {
                     throw new IllegalArgumentException("Cannot remove write block from searchable snapshot index");

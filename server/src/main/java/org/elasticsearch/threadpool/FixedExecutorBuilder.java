@@ -85,7 +85,17 @@ public final class FixedExecutorBuilder extends ExecutorBuilder<FixedExecutorBui
     ThreadPool.ExecutorHolder build(final FixedExecutorSettings settings, final ThreadContext threadContext) {
         int size = settings.size;
         int queueSize = settings.queueSize;
-        final ThreadFactory threadFactory = EsExecutors.daemonThreadFactory(EsExecutors.threadName(settings.nodeName, name()));
+
+        final String threadPoolName = name();
+        final String threadFactoryPrefix = EsExecutors.threadName(settings.nodeName, threadPoolName);
+
+        final ThreadFactory threadFactory;
+        if (ThreadPool.Names.SEARCH.equals(threadPoolName)) {
+            threadFactory = EsExecutors.daemonSearchThreadFactory(threadFactoryPrefix);
+        } else {
+            threadFactory = EsExecutors.daemonThreadFactory(threadFactoryPrefix);
+        }
+
         final ExecutorService executor =
                 EsExecutors.newFixed(settings.nodeName + "/" + name(), size, queueSize, threadFactory, threadContext, trackEWMA);
         final ThreadPool.Info info =

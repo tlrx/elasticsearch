@@ -22,7 +22,9 @@ import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.ActionRunnable;
 import org.elasticsearch.action.StepListener;
 import org.elasticsearch.action.support.GroupedActionListener;
+import org.elasticsearch.common.util.concurrent.SearchThread;
 import org.elasticsearch.index.store.Store;
+import org.elasticsearch.search.internal.SearchContext;
 import org.elasticsearch.xpack.searchablesnapshots.cache.blob.BlobStoreCacheService;
 import org.elasticsearch.xpack.searchablesnapshots.cache.blob.CachedBlob;
 import org.elasticsearch.cluster.metadata.IndexMetadata;
@@ -74,6 +76,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -394,16 +397,15 @@ public class SearchableSnapshotDirectory extends BaseDirectory {
             return ChecksumBlobContainerIndexInput.create(fileInfo.physicalName(), fileInfo.length(), fileInfo.checksum(), context);
         }
 
-        final String ext = getNonNullFileExt(name);
-        final IndexInputStats inputStats = stats.computeIfAbsent(ext, n -> {
-            final IndexInputStats.Counter counter = new IndexInputStats.Counter();
-            for (BlobStoreIndexShardSnapshot.FileInfo file : files()) {
-                if (ext.equals(getNonNullFileExt(file.physicalName()))) {
-                    counter.add(file.length());
-                }
-            }
-            return createIndexInputStats(counter.count(), counter.total(), counter.min(), counter.max());
-        });
+        final IndexInputStats inputStats;
+
+        final IndexInputStats searchLevelStats = searchLevelIndexInputStats(fileInfo);
+        if (searchLevelStats != null) {
+            inputStats = searchLevelStats;
+        } else {
+            inputStats = shardLevelIndexInputStats(name);
+        }
+
         if (useCache && isExcludedFromCache(name) == false) {
             if (partial) {
                 return new FrozenIndexInput(
@@ -437,6 +439,31 @@ public class SearchableSnapshotDirectory extends BaseDirectory {
                 bufferSize(context)
             );
         }
+    }
+
+    private IndexInputStats shardLevelIndexInputStats(String name) {
+        final String ext = getNonNullFileExt(name);
+        return stats.computeIfAbsent(ext, n -> {
+            final IndexInputStats.Counter counter = new IndexInputStats.Counter();
+            for (BlobStoreIndexShardSnapshot.FileInfo file : files()) {
+                if (ext.equals(getNonNullFileExt(file.physicalName()))) {
+                    counter.add(file.length());
+                }
+            }
+            return createIndexInputStats(counter.count(), counter.total(), counter.min(), counter.max());
+        });
+    }
+
+    @Nullable
+    private IndexInputStats searchLevelIndexInputStats(BlobStoreIndexShardSnapshot.FileInfo fileInfo) {
+        final Thread currentThread = Thread.currentThread();
+        if (currentThread instanceof SearchThread) {
+            final Map<String, Object> profilingMap = ((SearchThread) currentThread).getProfilingMap();
+            assert profilingMap != null;
+            return (IndexInputStats) profilingMap.compute(fileInfo.physicalName(), (s, o) ->
+                new IndexInputStats(1L, fileInfo.length(), fileInfo.length(), fileInfo.length(), statsCurrentTimeNanosSupplier));
+        }
+        return null;
     }
 
     static String getNonNullFileExt(String name) {
