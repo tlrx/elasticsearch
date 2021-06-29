@@ -12,6 +12,7 @@ import org.elasticsearch.action.admin.cluster.snapshots.restore.RestoreSnapshotR
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.repositories.fs.FsRepository;
+import org.elasticsearch.snapshots.SnapshotRestoreException;
 
 import java.util.Arrays;
 import java.util.List;
@@ -22,6 +23,8 @@ import static org.elasticsearch.index.IndexSettings.INDEX_SOFT_DELETES_SETTING;
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAcked;
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertHitCount;
 import static org.elasticsearch.xpack.core.searchablesnapshots.MountSearchableSnapshotRequest.Storage;
+import static org.elasticsearch.xpack.core.searchablesnapshots.SearchableSnapshotsConstants.DELETE_SEARCHABLE_SNAPSHOT_ON_INDEX_DELETION;
+import static org.hamcrest.Matchers.allOf;
 import static org.hamcrest.Matchers.containsString;
 
 public class SearchableSnapshotsRepositoryIntegTests extends BaseFrozenSearchableSnapshotsIntegTestCase {
@@ -109,5 +112,78 @@ public class SearchableSnapshotsRepositoryIntegTests extends BaseFrozenSearchabl
         }
 
         assertAcked(clusterAdmin().prepareDeleteRepository(updatedRepositoryName));
+    }
+
+    public void testMountIndexWithDeletionOfSnapshotFails() throws Exception {
+        final String suffix = getTestName().toLowerCase(Locale.ROOT);
+        final String repository = "repository-" + suffix;
+        final Settings.Builder repositorySettings = randomRepositorySettings();
+        createRepository(repository, FsRepository.TYPE, repositorySettings);
+
+        final String index = "index-" + suffix;
+        createAndPopulateIndex(index, Settings.builder().put(INDEX_SOFT_DELETES_SETTING.getKey(), true));
+
+        final TotalHits totalHits = internalCluster().client().prepareSearch(index).setTrackTotalHits(true).get().getHits().getTotalHits();
+
+        final String snapshot = "snapshot-" + suffix;
+        createSnapshot(repository, snapshot, List.of(index));
+        assertAcked(client().admin().indices().prepareDelete(index));
+
+        final boolean deleteSnapshot = randomBoolean();
+        final String mounted = mountSnapshot(repository, snapshot, index, deleteSnapshotIndexSettings(deleteSnapshot));
+
+        logger.info("--> index [{}] mounted with [{}={}]", mounted, DELETE_SEARCHABLE_SNAPSHOT_ON_INDEX_DELETION.getKey(), deleteSnapshot);
+        assertHitCount(client().prepareSearch(mounted).setTrackTotalHits(true).get(), totalHits.value);
+
+        final String mountedAgain = randomValueOtherThan(mounted, () -> randomAlphaOfLength(10).toLowerCase(Locale.ROOT));
+
+        // the snapshot is already mounted as an index, an attempt to mount the snapshot again
+        // with "index.store.snapshot.delete_searchable_snapshot: true" should fail
+        {
+            SnapshotRestoreException exception = expectThrows(
+                SnapshotRestoreException.class,
+                () -> mountSnapshot(repository, snapshot, index, mountedAgain, deleteSnapshotIndexSettings(true))
+            );
+            assertThat(
+                exception.getMessage(),
+                allOf(
+                    containsString("cannot mount snapshot [" + repository + '/'),
+                    containsString(snapshot + "] as index [" + mountedAgain + "] with the deletion of snapshot on index removal enabled"),
+                    containsString("; another index [" + mounted + '/'),
+                    containsString("] uses the snapshot.")
+                )
+            );
+        }
+
+        // the snapshot is already mounted as an index, we can only mount it again
+        // with "index.store.snapshot.delete_searchable_snapshot: false"
+        {
+            if (deleteSnapshot) {
+                SnapshotRestoreException exception = expectThrows(
+                    SnapshotRestoreException.class,
+                    () -> mountSnapshot(repository, snapshot, index, mountedAgain, deleteSnapshotIndexSettings(false))
+                );
+                assertThat(
+                    exception.getMessage(),
+                    allOf(
+                        containsString("cannot mount snapshot [" + repository + '/'),
+                        containsString(snapshot + "] as index [" + mountedAgain + "]; "),
+                        containsString("another index [" + mounted + '/'),
+                        containsString("] uses the snapshot with the deletion of snapshot on index removal enabled")
+                    )
+                );
+
+            } else {
+                // the snapshot is already mounted as an index, an attempt to mount the snapshot again should succeed if the cascade
+                // deletion
+                // of the snapshot is not enabled
+                mountSnapshot(repository, snapshot, index, mountedAgain, deleteSnapshotIndexSettings(false));
+                assertHitCount(client().prepareSearch(mountedAgain).setTrackTotalHits(true).get(), totalHits.value);
+            }
+        }
+    }
+
+    private Settings deleteSnapshotIndexSettings(boolean value) {
+        return Settings.builder().put(DELETE_SEARCHABLE_SNAPSHOT_ON_INDEX_DELETION.getKey(), value).build();
     }
 }

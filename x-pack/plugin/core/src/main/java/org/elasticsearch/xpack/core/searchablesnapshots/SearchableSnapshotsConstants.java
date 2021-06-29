@@ -26,6 +26,19 @@ public class SearchableSnapshotsConstants {
         Setting.Property.NotCopyableOnResize
     );
 
+    /**
+     * Indicates if the snapshot that is mounted as an index should be deleted when the index is deleted. This setting is only set for
+     * indices mounted in clusters on or after 8.0.0. Once set this setting can only be updated to the `false` value.
+     */
+    public static final Setting<Boolean> DELETE_SEARCHABLE_SNAPSHOT_ON_INDEX_DELETION = Setting.boolSetting(
+        "index.store.snapshot.delete_searchable_snapshot",
+        false,
+        Setting.Property.Dynamic,
+        Setting.Property.IndexScope,
+        Setting.Property.PrivateIndex,
+        Setting.Property.NotCopyableOnResize
+    );
+
     public static boolean isSearchableSnapshotStore(Settings indexSettings) {
         return SNAPSHOT_DIRECTORY_FACTORY_KEY.equals(INDEX_STORE_TYPE_SETTING.get(indexSettings));
     }

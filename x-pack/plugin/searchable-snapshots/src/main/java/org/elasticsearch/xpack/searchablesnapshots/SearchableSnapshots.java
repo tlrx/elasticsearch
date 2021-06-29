@@ -298,7 +298,8 @@ public class SearchableSnapshots extends Plugin implements IndexStorePlugin, Eng
             FrozenCacheService.FROZEN_CACHE_RECOVERY_RANGE_SIZE_SETTING,
             FrozenCacheService.SNAPSHOT_CACHE_MAX_FREQ_SETTING,
             FrozenCacheService.SNAPSHOT_CACHE_DECAY_INTERVAL_SETTING,
-            FrozenCacheService.SNAPSHOT_CACHE_MIN_TIME_DELTA_SETTING
+            FrozenCacheService.SNAPSHOT_CACHE_MIN_TIME_DELTA_SETTING,
+            SearchableSnapshotsConstants.DELETE_SEARCHABLE_SNAPSHOT_ON_INDEX_DELETION
         );
     }
 

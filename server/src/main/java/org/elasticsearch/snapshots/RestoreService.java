@@ -41,6 +41,7 @@ import org.elasticsearch.cluster.metadata.MetadataCreateIndexService;
 import org.elasticsearch.cluster.metadata.MetadataDeleteIndexService;
 import org.elasticsearch.cluster.metadata.MetadataIndexStateService;
 import org.elasticsearch.cluster.metadata.RepositoriesMetadata;
+import org.elasticsearch.cluster.metadata.RepositoryMetadata;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.routing.RecoverySource;
 import org.elasticsearch.cluster.routing.RecoverySource.SnapshotRecoverySource;
@@ -51,6 +52,7 @@ import org.elasticsearch.cluster.routing.UnassignedInfo;
 import org.elasticsearch.cluster.routing.allocation.AllocationService;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.Priority;
+import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.UUIDs;
 import org.elasticsearch.common.collect.ImmutableOpenMap;
 import org.elasticsearch.common.logging.DeprecationCategory;
@@ -73,6 +75,7 @@ import org.elasticsearch.repositories.IndexId;
 import org.elasticsearch.repositories.RepositoriesService;
 import org.elasticsearch.repositories.Repository;
 import org.elasticsearch.repositories.RepositoryData;
+import org.elasticsearch.repositories.RepositoryMissingException;
 import org.elasticsearch.repositories.blobstore.BlobStoreRepository;
 
 import java.io.IOException;
@@ -83,6 +86,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -101,6 +105,7 @@ import static org.elasticsearch.cluster.metadata.IndexMetadata.SETTING_NUMBER_OF
 import static org.elasticsearch.cluster.metadata.IndexMetadata.SETTING_NUMBER_OF_SHARDS;
 import static org.elasticsearch.cluster.metadata.IndexMetadata.SETTING_VERSION_CREATED;
 import static org.elasticsearch.common.util.set.Sets.newHashSet;
+import static org.elasticsearch.index.IndexModule.INDEX_STORE_TYPE_SETTING;
 import static org.elasticsearch.snapshots.SnapshotUtils.filterIndices;
 import static org.elasticsearch.snapshots.SnapshotsService.NO_FEATURE_STATES_VALUE;
 
@@ -1141,6 +1146,9 @@ public class RestoreService implements ClusterStateApplier {
                 resolveSystemIndicesToDelete(currentState, featureStatesToRestore)
             );
 
+            // List of snapshot backed indices that will be restored
+            final Set<Index> searchableSnapshotsIndices = new HashSet<>();
+
             // Updating cluster state
             final Metadata.Builder mdBuilder = Metadata.builder(currentState.metadata());
             final ClusterBlocks.Builder blocks = ClusterBlocks.builder().blocks(currentState.blocks());
@@ -1220,6 +1228,10 @@ public class RestoreService implements ClusterStateApplier {
                     blocks.updateBlocks(updatedIndexMetadata);
                 }
 
+                if ("snapshot".equals(INDEX_STORE_TYPE_SETTING.get(updatedIndexMetadata.getSettings()))) {
+                    searchableSnapshotsIndices.add(updatedIndexMetadata.getIndex());
+                }
+
                 mdBuilder.put(updatedIndexMetadata, true);
                 final Index renamedIndex = updatedIndexMetadata.getIndex();
                 for (int shard = 0; shard < snapshotIndexMetadata.getNumberOfShards(); shard++) {
@@ -1267,10 +1279,12 @@ public class RestoreService implements ClusterStateApplier {
             }
 
             updater.accept(currentState, mdBuilder);
-            return allocationService.reroute(
-                builder.metadata(mdBuilder).blocks(blocks).routingTable(rtBuilder.build()).build(),
-                "restored snapshot [" + snapshot + "]"
-            );
+
+            final ClusterState updatedClusterState = builder.metadata(mdBuilder).blocks(blocks).routingTable(rtBuilder.build()).build();
+            if (searchableSnapshotsIndices.isEmpty() == false) {
+                ensureSearchableSnapshotsRestorable(updatedClusterState, snapshotInfo, searchableSnapshotsIndices);
+            }
+            return allocationService.reroute(updatedClusterState, "restored snapshot [" + snapshot + "]");
         }
 
         private void applyDataStreamRestores(ClusterState currentState, Metadata.Builder mdBuilder) {
@@ -1487,5 +1501,86 @@ public class RestoreService implements ClusterStateApplier {
         createIndexService.validateIndexName(renamedIndexName, currentState);
         createIndexService.validateDotIndex(renamedIndexName, isHidden);
         createIndexService.validateIndexSettings(renamedIndexName, snapshotIndexMetadata.getSettings(), false);
+    }
+
+    private static void ensureSearchableSnapshotsRestorable(
+        final ClusterState currentState,
+        final SnapshotInfo snapshotInfo,
+        final Set<Index> indices
+    ) {
+        final Metadata metadata = currentState.metadata();
+        for (Index index : indices) {
+            final Settings indexSettings = metadata.getIndexSafe(index).getSettings();
+            final String repositoryUuid = indexSettings.get(RepositoriesService.SEARCHABLE_SNAPSHOTS_REPOSITORY_UUID_SETTING_KEY);
+            final String repositoryName = indexSettings.get(RepositoriesService.SEARCHABLE_SNAPSHOTS_REPOSITORY_NAME_SETTING_KEY);
+            final boolean deleteSnapshot = indexSettings.getAsBoolean("index.store.snapshot.delete_searchable_snapshot", false);
+            final String snapshotId = indexSettings.get("index.store.snapshot.snapshot_uuid");
+
+            for (IndexMetadata other : metadata) {
+                if (other.getIndex().equals(index)) {
+                    continue; // do not check the searchable snapshot index against itself
+                }
+
+                final Settings otherSettings = other.getSettings();
+                if ("snapshot".equals(INDEX_STORE_TYPE_SETTING.get(otherSettings)) == false) {
+                    continue; // other index is not a searchable snapshot index, skip
+                }
+
+                final String otherRepositoryUuid = otherSettings.get(RepositoriesService.SEARCHABLE_SNAPSHOTS_REPOSITORY_UUID_SETTING_KEY);
+                final String otherRepositoryName = otherSettings.get(RepositoriesService.SEARCHABLE_SNAPSHOTS_REPOSITORY_NAME_SETTING_KEY);
+                if (matchRepository(repositoryUuid, repositoryName, otherRepositoryUuid, otherRepositoryName) == false) {
+                    continue; // other index is backed by a snapshot from a different repository, skip
+                }
+
+                final String otherSnapshotId = otherSettings.get("index.store.snapshot.snapshot_uuid");
+                if (Objects.equals(snapshotId, otherSnapshotId)) {
+                    if (deleteSnapshot) {
+                        throw new SnapshotRestoreException(
+                            repositoryName,
+                            snapshotInfo.snapshotId().getName(),
+                            String.format(
+                                Locale.ROOT,
+                                "cannot mount snapshot [%s/%s:%s] as index [%s] with the deletion of snapshot on index removal enabled "
+                                    + "[index.store.snapshot.delete_searchable_snapshot: true]; another index %s uses the snapshot.",
+                                repositoryName,
+                                repositoryUuid,
+                                snapshotInfo.snapshotId().getName(),
+                                index.getName(),
+                                other.getIndex()
+                            )
+                        );
+                    } else if (otherSettings.getAsBoolean("index.store.snapshot.delete_searchable_snapshot", false)) {
+                        throw new SnapshotRestoreException(
+                            repositoryName,
+                            snapshotInfo.snapshotId().getName(),
+                            String.format(
+                                Locale.ROOT,
+                                "cannot mount snapshot [%s/%s:%s] as index [%s]; another index %s uses the snapshot "
+                                    + "with the deletion of snapshot on index removal enabled "
+                                    + "[index.store.snapshot.delete_searchable_snapshot: true].",
+                                repositoryName,
+                                repositoryUuid,
+                                snapshotInfo.snapshotId().getName(),
+                                index.getName(),
+                                other.getIndex()
+                            )
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    private static boolean matchRepository(
+        String repositoryUuid,
+        String repositoryName,
+        String otherRepositoryUuid,
+        String otherRepositoryName
+    ) {
+        if (Strings.hasLength(repositoryUuid) && Strings.hasLength(otherRepositoryUuid)) {
+            return Objects.equals(repositoryUuid, otherRepositoryUuid);
+        } else {
+            return Objects.equals(repositoryName, otherRepositoryName);
+        }
     }
 }
