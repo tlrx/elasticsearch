@@ -183,6 +183,44 @@ public class SearchableSnapshotsRepositoryIntegTests extends BaseFrozenSearchabl
         }
     }
 
+    public void testMountIndexWithDeletionOfSnapshotFailsIfNotSingleIndexSnapshot() throws Exception {
+        final String suffix = getTestName().toLowerCase(Locale.ROOT);
+        final String repository = "repository-" + suffix;
+        final Settings.Builder repositorySettings = randomRepositorySettings();
+        createRepository(repository, FsRepository.TYPE, repositorySettings);
+
+        final int nbIndices = randomIntBetween(1, 5);
+        for (int i = 0; i < nbIndices; i++) {
+            createAndPopulateIndex("index-" + suffix + '-' + i, Settings.builder().put(INDEX_SOFT_DELETES_SETTING.getKey(), true));
+        }
+
+        final String snapshot = "snapshot-" + suffix;
+        createFullSnapshot(repository, snapshot);
+        assertAcked(client().admin().indices().prepareDelete("index-" + suffix + "-*"));
+
+        final String index = "index-" + suffix + '-' + randomInt(nbIndices - 1);
+        final String mountedIndex = randomAlphaOfLength(10).toLowerCase(Locale.ROOT);
+
+        if (nbIndices != 1) {
+            SnapshotRestoreException exception = expectThrows(
+                SnapshotRestoreException.class,
+                () -> mountSnapshot(repository, snapshot, index, mountedIndex, deleteSnapshotIndexSettings(true))
+            );
+            assertThat(
+                exception.getMessage(),
+                allOf(
+                    containsString("cannot mount snapshot [" + repository + '/'),
+                    containsString(snapshot + "] as index [" + mountedIndex + "] with the deletion of snapshot on index removal enabled"),
+                    containsString("[index.store.snapshot.delete_searchable_snapshot: true]; "),
+                    containsString("snapshot contains [" + nbIndices + "] indices instead of 1.")
+                )
+            );
+        } else {
+            mountSnapshot(repository, snapshot, index, mountedIndex, deleteSnapshotIndexSettings(false));
+            ensureGreen(mountedIndex);
+        }
+    }
+
     private Settings deleteSnapshotIndexSettings(boolean value) {
         return Settings.builder().put(DELETE_SEARCHABLE_SNAPSHOT_ON_INDEX_DELETION.getKey(), value).build();
     }

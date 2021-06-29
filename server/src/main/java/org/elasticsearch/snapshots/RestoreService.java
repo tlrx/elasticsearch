@@ -1513,8 +1513,25 @@ public class RestoreService implements ClusterStateApplier {
             final Settings indexSettings = metadata.getIndexSafe(index).getSettings();
             final String repositoryUuid = indexSettings.get(RepositoriesService.SEARCHABLE_SNAPSHOTS_REPOSITORY_UUID_SETTING_KEY);
             final String repositoryName = indexSettings.get(RepositoriesService.SEARCHABLE_SNAPSHOTS_REPOSITORY_NAME_SETTING_KEY);
-            final boolean deleteSnapshot = indexSettings.getAsBoolean("index.store.snapshot.delete_searchable_snapshot", false);
             final String snapshotId = indexSettings.get("index.store.snapshot.snapshot_uuid");
+
+            final boolean deleteSnapshot = indexSettings.getAsBoolean("index.store.snapshot.delete_searchable_snapshot", false);
+            if (deleteSnapshot && snapshotInfo.indices().size() != 1) {
+                throw new SnapshotRestoreException(
+                    repositoryName,
+                    snapshotInfo.snapshotId().getName(),
+                    String.format(
+                        Locale.ROOT,
+                        "cannot mount snapshot [%s/%s:%s] as index [%s] with the deletion of snapshot on index removal enabled "
+                            + "[index.store.snapshot.delete_searchable_snapshot: true]; snapshot contains [%d] indices instead of 1.",
+                        repositoryName,
+                        repositoryUuid,
+                        snapshotInfo.snapshotId().getName(),
+                        index.getName(),
+                        snapshotInfo.indices().size()
+                    )
+                );
+            }
 
             for (IndexMetadata other : metadata) {
                 if (other.getIndex().equals(index)) {
