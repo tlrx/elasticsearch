@@ -9,10 +9,13 @@ package org.elasticsearch.xpack.searchablesnapshots;
 
 import org.apache.lucene.search.TotalHits;
 import org.elasticsearch.action.admin.cluster.snapshots.restore.RestoreSnapshotResponse;
+import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.repositories.fs.FsRepository;
+import org.elasticsearch.snapshots.ConcurrentSnapshotExecutionException;
 import org.elasticsearch.snapshots.SnapshotRestoreException;
+import org.elasticsearch.xpack.core.searchablesnapshots.MountSearchableSnapshotAction;
 
 import java.util.Arrays;
 import java.util.List;
@@ -26,6 +29,7 @@ import static org.elasticsearch.xpack.core.searchablesnapshots.MountSearchableSn
 import static org.elasticsearch.xpack.core.searchablesnapshots.SearchableSnapshotsConstants.DELETE_SEARCHABLE_SNAPSHOT_ON_INDEX_DELETION;
 import static org.hamcrest.Matchers.allOf;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.equalTo;
 
 public class SearchableSnapshotsRepositoryIntegTests extends BaseFrozenSearchableSnapshotsIntegTestCase {
 
@@ -191,7 +195,10 @@ public class SearchableSnapshotsRepositoryIntegTests extends BaseFrozenSearchabl
 
         final int nbIndices = randomIntBetween(1, 5);
         for (int i = 0; i < nbIndices; i++) {
-            createAndPopulateIndex("index-" + suffix + '-' + i, Settings.builder().put(INDEX_SOFT_DELETES_SETTING.getKey(), true));
+            createAndPopulateIndex("index-" + suffix + '-' + i,
+                Settings.builder()
+                    .put(INDEX_SOFT_DELETES_SETTING.getKey(), true)
+                    .put(IndexMetadata.SETTING_NUMBER_OF_REPLICAS, 0));
         }
 
         final String snapshot = "snapshot-" + suffix;
@@ -219,6 +226,45 @@ public class SearchableSnapshotsRepositoryIntegTests extends BaseFrozenSearchabl
             mountSnapshot(repository, snapshot, index, mountedIndex, deleteSnapshotIndexSettings(false));
             ensureGreen(mountedIndex);
         }
+    }
+
+    public void testMountIndexWithSnapshotAlreadyMarkedAsDeleted() throws Exception {
+        final String suffix = getTestName().toLowerCase(Locale.ROOT);
+        final String repository = "repository-" + suffix;
+        final Settings.Builder repositorySettings = randomRepositorySettings();
+        createRepository(repository, FsRepository.TYPE, repositorySettings);
+
+        final String index = "index-" + suffix;
+        createAndPopulateIndex(index, Settings.builder().put(INDEX_SOFT_DELETES_SETTING.getKey(), true));
+
+        final TotalHits totalHits = internalCluster().client().prepareSearch(index).setTrackTotalHits(true).get().getHits().getTotalHits();
+
+        final String snapshot = "snapshot-" + suffix;
+        createSnapshot(repository, snapshot, List.of(index));
+        assertAcked(client().admin().indices().prepareDelete(index));
+
+        final String mounted = mountSnapshot(repository, snapshot, index, deleteSnapshotIndexSettings(true));
+        assertHitCount(client().prepareSearch(mounted).setTrackTotalHits(true).get(), totalHits.value);
+        assertAcked(client().admin().indices().prepareDelete(mounted));
+
+        final String restoredIndex = randomValueOtherThan(mounted, () -> randomAlphaOfLength(10).toLowerCase(Locale.ROOT));
+        final boolean restore = randomBoolean();
+        logger.info("--> {} snapshot as index [{}]", restore ? "restoring" : "mounting", restoredIndex);
+        ConcurrentSnapshotExecutionException exception = expectThrows(ConcurrentSnapshotExecutionException.class, () -> {
+                if (restore) {
+                    final RestoreSnapshotResponse restoreResponse = client().admin().cluster()
+                        .prepareRestoreSnapshot(repository, snapshot)
+                        .setIndices(index)
+                        .setWaitForCompletion(true)
+                        .get();
+                    assertThat(restoreResponse.getRestoreInfo().successfulShards(), equalTo(getNumShards(restoredIndex).numPrimaries));
+                    assertThat(restoreResponse.getRestoreInfo().failedShards(), equalTo(0));
+                } else {
+                    mountSnapshot(repository, snapshot, index, restoredIndex, deleteSnapshotIndexSettings(randomBoolean()));
+                }
+            }
+        );
+        assertThat(exception.getMessage(), containsString("cannot restore a snapshot already marked as deleted"));
     }
 
     private Settings deleteSnapshotIndexSettings(boolean value) {

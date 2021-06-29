@@ -1328,6 +1328,15 @@ public class RestoreService implements ClusterStateApplier {
                     "cannot restore a snapshot while a snapshot deletion is in-progress [" + deletionsInProgress.getEntries().get(0) + "]"
                 );
             }
+            final RepositoryMetadata repositoryMetadata = currentState.metadata()
+                .custom(RepositoriesMetadata.TYPE, RepositoriesMetadata.EMPTY)
+                .repository(snapshot.getRepository());
+            if (repositoryMetadata != null && repositoryMetadata.snapshotsToDelete().contains(snapshot.getSnapshotId())) {
+                throw new ConcurrentSnapshotExecutionException(
+                    snapshot,
+                    "cannot restore a snapshot already marked as deleted [" + snapshot.getSnapshotId() + "]"
+                );
+            }
         }
 
         private void applyGlobalStateRestore(ClusterState currentState, Metadata.Builder mdBuilder) {
