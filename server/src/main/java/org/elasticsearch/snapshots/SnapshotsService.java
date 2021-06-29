@@ -49,6 +49,7 @@ import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.cluster.metadata.IndexNameExpressionResolver;
 import org.elasticsearch.cluster.metadata.Metadata;
 import org.elasticsearch.cluster.metadata.RepositoriesMetadata;
+import org.elasticsearch.cluster.metadata.RepositoryMetadata;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.node.DiscoveryNodes;
 import org.elasticsearch.cluster.routing.IndexRoutingTable;
@@ -129,6 +130,8 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
     public static final Version UUIDS_IN_REPO_DATA_VERSION = Version.V_7_12_0;
 
     public static final Version OLD_SNAPSHOT_FORMAT = Version.V_7_5_0;
+
+    public static final Version DELETE_SEARCHABLE_SNAPSHOT_ON_INDEX_DELETION_VERSION = Version.V_8_0_0;
 
     private static final Logger logger = LogManager.getLogger(SnapshotsService.class);
 
@@ -479,6 +482,15 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                         repositoryName,
                         sourceSnapshotId.getName(),
                         "cannot clone from snapshot that is being deleted"
+                    );
+                }
+                final RepositoryMetadata repositoryMetadata = currentState.metadata()
+                    .custom(RepositoriesMetadata.TYPE, RepositoriesMetadata.EMPTY)
+                    .repository(snapshot.getRepository());
+                if (repositoryMetadata != null && repositoryMetadata.snapshotsToDelete().contains(sourceSnapshotId)) {
+                    throw new ConcurrentSnapshotExecutionException(
+                        snapshot,
+                        "cannot clone a snapshot that is marked as deleted [" + sourceSnapshotId + "]"
                     );
                 }
                 ensureBelowConcurrencyLimit(repositoryName, snapshotName, snapshots, deletionsInProgress);

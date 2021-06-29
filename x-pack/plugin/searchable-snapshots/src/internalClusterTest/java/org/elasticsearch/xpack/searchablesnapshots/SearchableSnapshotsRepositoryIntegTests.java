@@ -228,7 +228,7 @@ public class SearchableSnapshotsRepositoryIntegTests extends BaseFrozenSearchabl
         }
     }
 
-    public void testMountIndexWithSnapshotAlreadyMarkedAsDeleted() throws Exception {
+    public void testSnapshotAlreadyMarkedAsDeleted() throws Exception {
         final String suffix = getTestName().toLowerCase(Locale.ROOT);
         final String repository = "repository-" + suffix;
         final Settings.Builder repositorySettings = randomRepositorySettings();
@@ -247,24 +247,45 @@ public class SearchableSnapshotsRepositoryIntegTests extends BaseFrozenSearchabl
         assertHitCount(client().prepareSearch(mounted).setTrackTotalHits(true).get(), totalHits.value);
         assertAcked(client().admin().indices().prepareDelete(mounted));
 
-        final String restoredIndex = randomValueOtherThan(mounted, () -> randomAlphaOfLength(10).toLowerCase(Locale.ROOT));
-        final boolean restore = randomBoolean();
-        logger.info("--> {} snapshot as index [{}]", restore ? "restoring" : "mounting", restoredIndex);
-        ConcurrentSnapshotExecutionException exception = expectThrows(ConcurrentSnapshotExecutionException.class, () -> {
-                if (restore) {
+        ConcurrentSnapshotExecutionException exception = null;
+        switch (2) {
+            case 0:
+                final String restoredIndex = randomValueOtherThan(mounted, () -> randomAlphaOfLength(10).toLowerCase(Locale.ROOT));
+                logger.info("--> restoring snapshot as index [{}]", restoredIndex);
+                exception = expectThrows(ConcurrentSnapshotExecutionException.class, () -> {
                     final RestoreSnapshotResponse restoreResponse = client().admin().cluster()
                         .prepareRestoreSnapshot(repository, snapshot)
                         .setIndices(index)
                         .setWaitForCompletion(true)
                         .get();
                     assertThat(restoreResponse.getRestoreInfo().successfulShards(), equalTo(getNumShards(restoredIndex).numPrimaries));
-                    assertThat(restoreResponse.getRestoreInfo().failedShards(), equalTo(0));
-                } else {
-                    mountSnapshot(repository, snapshot, index, restoredIndex, deleteSnapshotIndexSettings(randomBoolean()));
-                }
-            }
-        );
-        assertThat(exception.getMessage(), containsString("cannot restore a snapshot already marked as deleted"));
+                    assertThat(restoreResponse.getRestoreInfo().failedShards(), equalTo(0));                    }
+                );
+                assertThat(exception.getMessage(), containsString("cannot restore a snapshot already marked as deleted"));
+                break;
+
+            case 1:
+                final String mountedIndex = randomValueOtherThan(mounted, () -> randomAlphaOfLength(10).toLowerCase(Locale.ROOT));
+                logger.info("--> mounting snapshot as index [{}]", mountedIndex);
+                exception = expectThrows(ConcurrentSnapshotExecutionException.class, () ->
+                    mountSnapshot(repository, snapshot, index, mountedIndex, deleteSnapshotIndexSettings(randomBoolean()))
+                );
+                assertThat(exception.getMessage(), containsString("cannot restore a snapshot already marked as deleted"));
+                break;
+
+            case 2:
+                final String clone = randomAlphaOfLength(10).toLowerCase(Locale.ROOT);
+                logger.info("--> cloning snapshot as [{}]", clone);
+                exception = expectThrows(ConcurrentSnapshotExecutionException.class, () ->
+                    client().admin().cluster().prepareCloneSnapshot(repository, snapshot, clone).setIndices(index).get()
+                );
+                assertThat(exception.getMessage(), containsString("cannot clone a snapshot that is marked as deleted"));
+                break;
+
+            default:
+                throw new AssertionError();
+        }
+        assertAcked(client().admin().cluster().prepareDeleteSnapshot(repository, snapshot).get());
     }
 
     private Settings deleteSnapshotIndexSettings(boolean value) {
