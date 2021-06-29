@@ -14,6 +14,7 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.repositories.fs.FsRepository;
 import org.elasticsearch.snapshots.ConcurrentSnapshotExecutionException;
+import org.elasticsearch.snapshots.SnapshotException;
 import org.elasticsearch.snapshots.SnapshotRestoreException;
 import org.elasticsearch.xpack.core.searchablesnapshots.MountSearchableSnapshotAction;
 
@@ -285,6 +286,39 @@ public class SearchableSnapshotsRepositoryIntegTests extends BaseFrozenSearchabl
             default:
                 throw new AssertionError();
         }
+        assertAcked(client().admin().cluster().prepareDeleteSnapshot(repository, snapshot).get());
+    }
+
+    public void testDeleteSnapshotThatIsMountedAsIndex() throws Exception {
+        final String suffix = getTestName().toLowerCase(Locale.ROOT);
+        final String repository = "repository-" + suffix;
+        final Settings.Builder repositorySettings = randomRepositorySettings();
+        createRepository(repository, FsRepository.TYPE, repositorySettings);
+
+        final String index = "index-" + suffix;
+        createAndPopulateIndex(index, Settings.builder().put(INDEX_SOFT_DELETES_SETTING.getKey(), true));
+
+        final String snapshot = "snapshot-" + suffix;
+        createSnapshot(repository, snapshot, List.of(index));
+        assertAcked(client().admin().indices().prepareDelete(index));
+
+        final String mounted = "mounted-" + suffix;
+        mountSnapshot(repository, snapshot, index, mounted, deleteSnapshotIndexSettings(true), randomFrom(Storage.values()));
+
+        SnapshotException exception = expectThrows(SnapshotException.class,
+            () -> client().admin().cluster().prepareDeleteSnapshot(repository, snapshot).get());
+        assertThat(exception.getMessage(),
+            allOf(
+                containsString("cannot delete snapshot [" + snapshot + '/'),
+                containsString(" used by searchable snapshots index [" + mounted + '/')
+            )
+        );
+        assertAcked(client().admin().indices().prepareDelete(mounted));
+
+        if (randomBoolean()) {
+            mountSnapshot(repository, snapshot, index, mounted, deleteSnapshotIndexSettings(false), randomFrom(Storage.values()));
+        }
+
         assertAcked(client().admin().cluster().prepareDeleteSnapshot(repository, snapshot).get());
     }
 

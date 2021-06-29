@@ -1885,10 +1885,6 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                         );
                     }
                 }
-                final SnapshotDeletionsInProgress deletionsInProgress = currentState.custom(
-                    SnapshotDeletionsInProgress.TYPE,
-                    SnapshotDeletionsInProgress.EMPTY
-                );
                 final RepositoryCleanupInProgress repositoryCleanupInProgress = currentState.custom(
                     RepositoryCleanupInProgress.TYPE,
                     RepositoryCleanupInProgress.EMPTY
@@ -1912,6 +1908,24 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                         );
                     }
                 }
+
+                // prevent snapshot deletion if a mounted index uses the snapshot
+                for (IndexMetadata indexMetadata : currentState.metadata()) {
+                    final Settings indexSettings = indexMetadata.getSettings();
+                    if (RepositoriesService.indexSettingsMatchRepositoryMetadata(indexSettings, repository.getMetadata())) {
+                        // TODO remove this condition when ILM correctly use the delete_searchable_snapshot setting
+                        if (indexSettings.hasValue("index.store.snapshot.delete_searchable_snapshot")) {
+                            final String indexSnapshotId = indexSettings.get("index.store.snapshot.snapshot_uuid");
+                            for (SnapshotId snapshotId : snapshotIds) {
+                                if (Objects.equals(snapshotId.getUUID(), indexSnapshotId)) {
+                                    throw new SnapshotException(repoName, snapshotId.getName(), "cannot delete snapshot [" + snapshotId
+                                        + "] used by searchable snapshots index " + indexMetadata.getIndex());
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // Snapshot ids that will have to be physically deleted from the repository
                 final Set<SnapshotId> snapshotIdsRequiringCleanup = new HashSet<>(snapshotIds);
                 final SnapshotsInProgress updatedSnapshots = SnapshotsInProgress.of(snapshots.entries().stream().map(existing -> {
@@ -1938,6 +1952,10 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                     // We only saw snapshots that could be removed from the cluster state right away, no need to update the deletions
                     return updateWithSnapshots(currentState, updatedSnapshots, null);
                 }
+                final SnapshotDeletionsInProgress deletionsInProgress = currentState.custom(
+                    SnapshotDeletionsInProgress.TYPE,
+                    SnapshotDeletionsInProgress.EMPTY
+                );
                 // add the snapshot deletion to the cluster state
                 final SnapshotDeletionsInProgress.Entry replacedEntry = deletionsInProgress.getEntries()
                     .stream()
