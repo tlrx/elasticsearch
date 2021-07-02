@@ -109,6 +109,7 @@ import org.elasticsearch.xpack.searchablesnapshots.rest.RestClearSearchableSnaps
 import org.elasticsearch.xpack.searchablesnapshots.rest.RestMountSearchableSnapshotAction;
 import org.elasticsearch.xpack.searchablesnapshots.rest.RestSearchableSnapshotsNodeCachesStatsAction;
 import org.elasticsearch.xpack.searchablesnapshots.rest.RestSearchableSnapshotsStatsAction;
+import org.elasticsearch.xpack.searchablesnapshots.snapshots.SearchableSnapshotsDeleter;
 import org.elasticsearch.xpack.searchablesnapshots.store.SearchableSnapshotDirectory;
 import org.elasticsearch.xpack.searchablesnapshots.upgrade.SearchableSnapshotIndexMetadataUpgrader;
 
@@ -235,6 +236,20 @@ public class SearchableSnapshots extends Plugin implements IndexStorePlugin, Eng
     );
 
     /**
+     * Index setting for mounted indices that indicates if the snapshot that is mounted as an index should be deleted when the index
+     * is deleted. This setting is only set for indices mounted in clusters on or after 8.0.0. Once set this setting can only be updated
+     * to the `false` value.
+     */
+    public static final Setting<Boolean> DELETE_SEARCHABLE_SNAPSHOT_ON_INDEX_DELETION = Setting.boolSetting(
+        "index.store.snapshot.delete_searchable_snapshot",
+        false,
+        Setting.Property.Dynamic,
+        Setting.Property.IndexScope,
+        Setting.Property.PrivateIndex,
+        Setting.Property.NotCopyableOnResize
+    );
+
+    /**
      * Prefer to allocate to the data content tier and then the hot tier.
      * This affects the system searchable snapshot cache index (not the searchable snapshot index itself)
      */
@@ -299,7 +314,7 @@ public class SearchableSnapshots extends Plugin implements IndexStorePlugin, Eng
             FrozenCacheService.SNAPSHOT_CACHE_MAX_FREQ_SETTING,
             FrozenCacheService.SNAPSHOT_CACHE_DECAY_INTERVAL_SETTING,
             FrozenCacheService.SNAPSHOT_CACHE_MIN_TIME_DELTA_SETTING,
-            SearchableSnapshotsConstants.DELETE_SEARCHABLE_SNAPSHOT_ON_INDEX_DELETION
+            DELETE_SEARCHABLE_SNAPSHOT_ON_INDEX_DELETION
         );
     }
 
@@ -344,6 +359,7 @@ public class SearchableSnapshots extends Plugin implements IndexStorePlugin, Eng
         if (DiscoveryNode.isMasterNode(settings)) {
             new SearchableSnapshotIndexMetadataUpgrader(clusterService, threadPool).initialize();
             clusterService.addListener(new RepositoryUuidWatcher(clusterService.getRerouteService()));
+            clusterService.addListener(new SearchableSnapshotsDeleter(threadPool, client));
         }
         return Collections.unmodifiableList(components);
     }
@@ -355,7 +371,6 @@ public class SearchableSnapshots extends Plugin implements IndexStorePlugin, Eng
                 new SearchableSnapshotIndexEventListener(settings, cacheService.get(), frozenCacheService.get())
             );
             indexModule.addIndexEventListener(failShardsListener.get());
-
             indexModule.addSettingsUpdateConsumer(IndexMetadata.INDEX_BLOCKS_WRITE_SETTING, s -> {}, write -> {
                 if (write == false) {
                     throw new IllegalArgumentException("Cannot remove write block from searchable snapshot index");
@@ -728,4 +743,5 @@ public class SearchableSnapshots extends Plugin implements IndexStorePlugin, Eng
             assert knownUuids.equals(newUuids) : knownUuids + " vs " + newUuids;
         }
     }
+
 }

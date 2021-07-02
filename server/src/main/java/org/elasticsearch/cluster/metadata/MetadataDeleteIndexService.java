@@ -21,20 +21,29 @@ import org.elasticsearch.cluster.routing.RoutingTable;
 import org.elasticsearch.cluster.routing.allocation.AllocationService;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.Priority;
+import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.collect.ImmutableOpenMap;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.util.set.Sets;
 import org.elasticsearch.index.Index;
+import org.elasticsearch.index.IndexSettings;
+import org.elasticsearch.repositories.RepositoriesService;
 import org.elasticsearch.snapshots.RestoreService;
+import org.elasticsearch.snapshots.SnapshotId;
 import org.elasticsearch.snapshots.SnapshotInProgressException;
 import org.elasticsearch.snapshots.SnapshotsService;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
+
+import static java.util.Collections.emptyList;
+import static org.elasticsearch.index.IndexModule.INDEX_STORE_TYPE_SETTING;
 
 /**
  * Deletes indices.
@@ -45,7 +54,6 @@ public class MetadataDeleteIndexService {
 
     private final Settings settings;
     private final ClusterService clusterService;
-
     private final AllocationService allocationService;
 
     @Inject
@@ -76,6 +84,8 @@ public class MetadataDeleteIndexService {
         final Metadata meta = currentState.metadata();
         final Set<Index> indicesToDelete = new HashSet<>();
         final Map<Index, DataStream> backingIndices = new HashMap<>();
+        final Map<String, Set<SnapshotId>> snapshotsToDelete = new HashMap<>();
+
         for (Index index : indices) {
             IndexMetadata im = meta.getIndexSafe(index);
             IndexAbstraction.DataStream parent = meta.getIndicesLookup().get(im.getIndex().getName()).getParentDataStream();
@@ -85,6 +95,30 @@ public class MetadataDeleteIndexService {
                         parent.getName() + "] and cannot be deleted");
                 } else {
                     backingIndices.put(index, parent.getDataStream());
+                }
+            }
+            final Settings indexSettings = im.getSettings();
+            if ("snapshot".equals(INDEX_STORE_TYPE_SETTING.get(indexSettings))) {
+                if (indexSettings.getAsBoolean("index.store.snapshot.delete_searchable_snapshot", false)) {
+                    final String repositoryUuid = indexSettings.get(RepositoriesService.SEARCHABLE_SNAPSHOTS_REPOSITORY_UUID_SETTING_KEY);
+                    final String repositoryName;
+                    if (Strings.hasLength(repositoryUuid) == false) {
+                        repositoryName = indexSettings.get(RepositoriesService.SEARCHABLE_SNAPSHOTS_REPOSITORY_NAME_SETTING_KEY);
+                    } else {
+                        final RepositoriesMetadata repoMetadata = currentState.metadata().custom(RepositoriesMetadata.TYPE);
+                        final List<RepositoryMetadata> repositories = repoMetadata == null ? emptyList() : repoMetadata.repositories();
+                        repositoryName = repositories.stream()
+                            .filter(r -> repositoryUuid.equals(r.uuid()))
+                            .map(RepositoryMetadata::name)
+                            .findFirst()
+                            .orElse(null);
+                    }
+                    final SnapshotId snapshotId = new SnapshotId(
+                        indexSettings.get("index.store.snapshot.snapshot_name"),
+                        indexSettings.get("index.store.snapshot.snapshot_uuid")
+                    );
+                    final boolean added = snapshotsToDelete.computeIfAbsent(repositoryName, r -> new HashSet<>()).add(snapshotId);
+                    assert added : "Duplicate snapshot to delete: " + snapshotId;
                 }
             }
             indicesToDelete.add(im.getIndex());
@@ -119,6 +153,20 @@ public class MetadataDeleteIndexService {
         metadataBuilder.indexGraveyard(currentGraveyard); // the new graveyard set on the metadata
         logger.trace("{} tombstones purged from the cluster state. Previous tombstone size: {}. Current tombstone size: {}.",
             graveyardBuilder.getNumPurged(), previousGraveyardSize, currentGraveyard.getTombstones().size());
+
+        // add snapshot(s) to delete to the cluster state
+        RepositoriesMetadata repositories = currentState.metadata().custom(RepositoriesMetadata.TYPE, RepositoriesMetadata.EMPTY);
+        boolean changed = false;
+        for (Map.Entry<String, Set<SnapshotId>> snapshotToDelete : snapshotsToDelete.entrySet()) {
+            RepositoryMetadata repository = repositories.repository(snapshotToDelete.getKey());
+            if (repository != null) {
+                repositories = repositories.addSnapshotsToDelete(repository.name(), snapshotToDelete.getValue());
+                changed = true;
+            }
+        }
+        if (changed) {
+            metadataBuilder.putCustom(RepositoriesMetadata.TYPE, repositories);
+        }
 
         Metadata newMetadata = metadataBuilder.build();
         ClusterBlocks blocks = clusterBlocksBuilder.build();

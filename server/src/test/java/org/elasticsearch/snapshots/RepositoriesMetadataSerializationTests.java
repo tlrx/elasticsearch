@@ -17,12 +17,14 @@ import org.elasticsearch.common.io.stream.NamedWriteableRegistry;
 import org.elasticsearch.common.io.stream.Writeable;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.XContentParser;
+import org.elasticsearch.repositories.RepositoryData;
 import org.elasticsearch.test.AbstractDiffableSerializationTestCase;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 
 public class RepositoriesMetadataSerializationTests extends AbstractDiffableSerializationTestCase<Custom> {
 
@@ -40,7 +42,8 @@ public class RepositoriesMetadataSerializationTests extends AbstractDiffableSeri
                     randomAlphaOfLength(10),
                     randomSettings(),
                     generation,
-                    generation + randomLongBetween(0, generation)
+                    generation + randomLongBetween(0, generation),
+                    randomSnapshotsToDelete()
                 )
             );
         }
@@ -58,7 +61,16 @@ public class RepositoriesMetadataSerializationTests extends AbstractDiffableSeri
         List<RepositoryMetadata> entries = new ArrayList<>(((RepositoriesMetadata) instance).repositories());
         boolean addEntry = entries.isEmpty() ? true : randomBoolean();
         if (addEntry) {
-            entries.add(new RepositoryMetadata(randomAlphaOfLength(10), randomAlphaOfLength(10), randomSettings()));
+            entries.add(
+                new RepositoryMetadata(
+                    randomAlphaOfLength(10),
+                    RepositoryData.MISSING_UUID,
+                    randomAlphaOfLength(10),
+                    randomSettings(),
+                    RepositoryData.UNKNOWN_REPO_GEN,
+                    RepositoryData.EMPTY_REPO_GEN,
+                    randomSnapshotsToDelete())
+            );
         } else {
             entries.remove(randomIntBetween(0, entries.size() - 1));
         }
@@ -75,6 +87,19 @@ public class RepositoriesMetadataSerializationTests extends AbstractDiffableSeri
                 builder.put(randomAlphaOfLength(10), randomAlphaOfLength(20));
             }
             return builder.build();
+        }
+    }
+
+    public List<SnapshotId> randomSnapshotsToDelete() {
+        if (randomBoolean()) {
+            return List.of();
+        } else {
+            int numberOfSnapshots = randomInt(10);
+            List<SnapshotId> snapshotIds = new ArrayList<>(numberOfSnapshots);
+            for (int i = 0; i < numberOfSnapshots; i++) {
+                snapshotIds.add(new SnapshotId(randomAlphaOfLength(10).toLowerCase(Locale.ROOT), String.valueOf(i)));
+            }
+            return List.copyOf(snapshotIds);
         }
     }
 

@@ -477,13 +477,6 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                     SnapshotDeletionsInProgress.TYPE,
                     SnapshotDeletionsInProgress.EMPTY
                 );
-                if (deletionsInProgress.getEntries().stream().anyMatch(entry -> entry.getSnapshots().contains(sourceSnapshotId))) {
-                    throw new ConcurrentSnapshotExecutionException(
-                        repositoryName,
-                        sourceSnapshotId.getName(),
-                        "cannot clone from snapshot that is being deleted"
-                    );
-                }
                 final RepositoryMetadata repositoryMetadata = currentState.metadata()
                     .custom(RepositoriesMetadata.TYPE, RepositoriesMetadata.EMPTY)
                     .repository(snapshot.getRepository());
@@ -491,6 +484,13 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                     throw new ConcurrentSnapshotExecutionException(
                         snapshot,
                         "cannot clone a snapshot that is marked as deleted [" + sourceSnapshotId + "]"
+                    );
+                }
+                if (deletionsInProgress.getEntries().stream().anyMatch(entry -> entry.getSnapshots().contains(sourceSnapshotId))) {
+                    throw new ConcurrentSnapshotExecutionException(
+                        repositoryName,
+                        sourceSnapshotId.getName(),
+                        "cannot clone from snapshot that is being deleted"
                     );
                 }
                 ensureBelowConcurrencyLimit(repositoryName, snapshotName, snapshots, deletionsInProgress);
@@ -2567,6 +2567,19 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
         }
         if (snapshotDeletionsInProgress != null) {
             builder.putCustom(SnapshotDeletionsInProgress.TYPE, snapshotDeletionsInProgress);
+
+            boolean changed = false;
+            RepositoriesMetadata repositories = state.metadata().custom(RepositoriesMetadata.TYPE, RepositoriesMetadata.EMPTY);
+            for (SnapshotDeletionsInProgress.Entry deletion : snapshotDeletionsInProgress.getEntries()) {
+                RepositoryMetadata repository = repositories.repository(deletion.repository());
+                if (repository != null && repository.hasSnapshotsToDelete()) {
+                    repositories = repositories.removeSnapshotsToDelete(repository.name(), deletion.getSnapshots());
+                    changed = true; // TODO we can do better at detecting changes ^^
+                }
+            }
+            if (changed) {
+                builder.metadata(Metadata.builder(state.metadata()).putCustom(RepositoriesMetadata.TYPE, repositories));
+            }
         }
         return builder.build();
     }
