@@ -109,7 +109,7 @@ import org.elasticsearch.xpack.searchablesnapshots.rest.RestClearSearchableSnaps
 import org.elasticsearch.xpack.searchablesnapshots.rest.RestMountSearchableSnapshotAction;
 import org.elasticsearch.xpack.searchablesnapshots.rest.RestSearchableSnapshotsNodeCachesStatsAction;
 import org.elasticsearch.xpack.searchablesnapshots.rest.RestSearchableSnapshotsStatsAction;
-import org.elasticsearch.xpack.searchablesnapshots.snapshots.SearchableSnapshotsDeleter;
+import org.elasticsearch.xpack.searchablesnapshots.snapshots.SearchableSnapshotsDeletions;
 import org.elasticsearch.xpack.searchablesnapshots.store.SearchableSnapshotDirectory;
 import org.elasticsearch.xpack.searchablesnapshots.upgrade.SearchableSnapshotIndexMetadataUpgrader;
 
@@ -359,7 +359,7 @@ public class SearchableSnapshots extends Plugin implements IndexStorePlugin, Eng
         if (DiscoveryNode.isMasterNode(settings)) {
             new SearchableSnapshotIndexMetadataUpgrader(clusterService, threadPool).initialize();
             clusterService.addListener(new RepositoryUuidWatcher(clusterService.getRerouteService()));
-            clusterService.addListener(new SearchableSnapshotsDeleter(threadPool, client));
+            clusterService.addListener(new SearchableSnapshotsDeletions(threadPool, client));
         }
         return Collections.unmodifiableList(components);
     }

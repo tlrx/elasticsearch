@@ -34,6 +34,7 @@ import org.elasticsearch.snapshots.SnapshotInfo;
 import org.elasticsearch.snapshots.SnapshotMissingException;
 import org.elasticsearch.snapshots.SnapshotRestoreException;
 import org.elasticsearch.snapshots.SnapshotState;
+import org.elasticsearch.test.junit.annotations.TestLogging;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -388,12 +389,13 @@ public class SearchableSnapshotsRepositoryIntegTests extends BaseFrozenSearchabl
         expectThrows(SnapshotMissingException.class, () -> clusterAdmin().prepareDeleteSnapshot(repository, snapshot).get());
     }
 
+    @TestLogging(value = "org.elasticsearch.xpack.searchablesnapshots.snapshots:DEBUG", reason = "fdf")
     public void testSearchableSnapshotsAreDeletedAfterMountedIndicesAreDeleted() throws Exception {
         final String suffix = getTestName().toLowerCase(Locale.ROOT);
         final String repository = "repository-" + suffix;
         createRepository(logger, repository, "mock");
 
-        final int nbIndices = randomIntBetween(2, 10);
+        final int nbIndices = 3;randomIntBetween(2, 10);
         final String[] mountedIndices = new String[nbIndices];
 
         for (int i = 0; i < nbIndices; i++) {
@@ -407,6 +409,8 @@ public class SearchableSnapshotsRepositoryIntegTests extends BaseFrozenSearchabl
             mountSnapshot(repository, snapshot, index, mounted, deleteSnapshotIndexSettings(true), randomFrom(Storage.values()));
             mountedIndices[i] = mounted;
         }
+
+        awaitNoMoreRunningOperations();
         blockAllDataNodes(repository);
 
         final List<ActionFuture<?>> futures = new ArrayList<>();
@@ -442,7 +446,7 @@ public class SearchableSnapshotsRepositoryIntegTests extends BaseFrozenSearchabl
         }
         {
             for (int i = 0; i < nbIndices; i++) {
-                futures.add(waitForSnapshotDeletion(repository, "snapshot-" + i));
+                //futures.add(waitForSnapshotDeletion(repository, "snapshot-" + i));
             }
 
             final List<String> remainingIndicesToDelete = new ArrayList<>(asSet(mountedIndices));
@@ -479,16 +483,19 @@ public class SearchableSnapshotsRepositoryIntegTests extends BaseFrozenSearchabl
                     assertThat(csee.getMessage(),
                         anyOf(
                             containsString("cannot clone a snapshot that is marked as deleted"),
-                            containsString("cannot restore a snapshot already marked as deleted")
+                            containsString("cannot restore a snapshot already marked as deleted"),
+                            containsString("cannot clone from snapshot that is being deleted")
                     ));
                 }
             }
+            GetSnapshotsResponse response = clusterAdmin().prepareGetSnapshots(repository).get();
+            for (SnapshotInfo snapshot : response.getSnapshots()) {
+                assertFalse(snapshot.snapshotId().getName().startsWith("snapshot-"));
+            }
         });
 
-        GetSnapshotsResponse response = clusterAdmin().prepareGetSnapshots(repository).get();
-        for (SnapshotInfo snapshot : response.getSnapshots()) {
-            assertFalse(snapshot.snapshotId().getName().startsWith("snapshot-"));
-        }
+        awaitNoMoreRunningOperations();
+
     }
 
     private Settings deleteSnapshotIndexSettings(boolean value) {
@@ -504,6 +511,7 @@ public class SearchableSnapshotsRepositoryIntegTests extends BaseFrozenSearchabl
         clusterService.addListener(new ClusterStateListener() {
 
             boolean marked = false;
+            boolean deleted = false;
 
             @Override
             public void clusterChanged(ClusterChangedEvent event) {
@@ -513,6 +521,9 @@ public class SearchableSnapshotsRepositoryIntegTests extends BaseFrozenSearchabl
                     .repository(repository);
                 assert repositoryMetadata != null;
 
+                final SnapshotDeletionsInProgress deletionsInProgress = event.state()
+                    .custom(SnapshotDeletionsInProgress.TYPE, SnapshotDeletionsInProgress.EMPTY);
+
                 if (marked == false) {
                     for (SnapshotId snapshotToDelete : repositoryMetadata.snapshotsToDelete()) {
                         if (snapshot.equals(snapshotToDelete.getName())) {
@@ -521,9 +532,17 @@ public class SearchableSnapshotsRepositoryIntegTests extends BaseFrozenSearchabl
                             return;
                         }
                     }
-                } else if (repositoryMetadata.hasSnapshotsToDelete() == false) {
-                    final SnapshotDeletionsInProgress deletionsInProgress = event.state().custom(SnapshotDeletionsInProgress.TYPE);
-                    if (deletionsInProgress == null || deletionsInProgress.hasDeletionsInProgress() == false) {
+                } else if (deleted == false) {
+                    if (repositoryMetadata.snapshotsToDelete().stream().noneMatch(snap -> snap.getName().equals(snapshot))
+                        && deletionsInProgress.getEntries().stream()
+                            .filter(deletion -> repository.equals(deletion.repository()))
+                            .flatMap(del -> del.getSnapshots().stream())
+                            .anyMatch(snap -> snap.getName().equals(snapshot))) {
+                        logger.info("--> snapshot {} found in delete", snapshot);
+                            deleted = true;
+                    }
+                } else  {
+                    if (repositoryMetadata.hasSnapshotsToDelete() == false && deletionsInProgress.hasDeletionsInProgress()) {
                         logger.info("--> snapshot {} removed from list of snapshots to delete in repository metadata", snapshot);
                         clusterService.removeListener(this);
                         future.onResponse(AcknowledgedResponse.of(true));
