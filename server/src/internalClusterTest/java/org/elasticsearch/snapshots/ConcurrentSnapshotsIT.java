@@ -9,18 +9,23 @@ package org.elasticsearch.snapshots;
 
 import com.carrotsearch.hppc.cursors.ObjectCursor;
 
+import com.carrotsearch.randomizedtesting.annotations.Repeat;
+
 import org.elasticsearch.ElasticsearchException;
+import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.action.ActionFuture;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.StepListener;
 import org.elasticsearch.action.admin.cluster.snapshots.create.CreateSnapshotResponse;
 import org.elasticsearch.action.admin.cluster.snapshots.get.GetSnapshotsRequest;
+import org.elasticsearch.action.admin.cluster.snapshots.restore.RestoreSnapshotResponse;
 import org.elasticsearch.action.admin.cluster.snapshots.status.SnapshotStatus;
 import org.elasticsearch.action.admin.cluster.snapshots.status.SnapshotsStatusResponse;
 import org.elasticsearch.action.support.GroupedActionListener;
 import org.elasticsearch.action.support.PlainActionFuture;
 import org.elasticsearch.action.support.master.AcknowledgedResponse;
 import org.elasticsearch.cluster.ClusterState;
+import org.elasticsearch.cluster.RestoreInProgress;
 import org.elasticsearch.cluster.SnapshotDeletionsInProgress;
 import org.elasticsearch.cluster.SnapshotsInProgress;
 import org.elasticsearch.common.Strings;
@@ -45,10 +50,13 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
 import static org.elasticsearch.cluster.metadata.IndexMetadata.SETTING_NUMBER_OF_REPLICAS;
 import static org.elasticsearch.cluster.metadata.IndexMetadata.SETTING_NUMBER_OF_SHARDS;
+import static org.elasticsearch.index.IndexSettings.INDEX_SOFT_DELETES_SETTING;
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAcked;
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertFileExists;
 import static org.hamcrest.Matchers.contains;
@@ -58,6 +66,7 @@ import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.endsWith;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.greaterThan;
+import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.is;
@@ -1364,6 +1373,75 @@ public class ConcurrentSnapshotsIT extends AbstractSnapshotIntegTestCase {
         unblockNode(repoName, dataNode);
         assertSuccessful(blockedSnapshot);
         assertSuccessful(otherSnapshot);
+    }
+
+    @Repeat(iterations = 50)
+    public void testMe() throws Exception {
+        final String repository = "repository-tlrx";
+        createRepository(logger, repository, "mock");
+
+        final int nbIndices = 3;randomIntBetween(2, 20);
+
+        for (int i = 0; i < nbIndices; i++) {
+            final String index = "index-" + i;
+            createIndexWithContent(index);
+
+            final String snapshot = "snapshot-" + i;
+            createSnapshot(repository, snapshot, List.of(index));
+        }
+
+        blockAllDataNodes(repository);
+
+        final List<ActionFuture<?>> futures = new ArrayList<>();
+        {
+            for (int i = 0; i < nbIndices; i++) {
+                final ActionFuture<?> future;
+                if (randomBoolean()) {
+                    future = client().admin().cluster().prepareRestoreSnapshot(repository, "snapshot-" + i)
+                        .setIndices("index-" + i).setRenamePattern("(.+)").setRenameReplacement("$1-restored-" + i)
+                        .setWaitForCompletion(true).execute();
+                } else {
+                    future = client().admin().cluster().prepareCloneSnapshot(repository, "snapshot-" + i, "clone-" + i)
+                        .setIndices("index-" + i).execute();
+                }
+                futures.add(future);
+            }
+        }
+
+        awaitClusterState(state ->
+            state.custom(
+                SnapshotsInProgress.TYPE, SnapshotsInProgress.EMPTY).entries().size() > 0
+                || state.custom(RestoreInProgress.TYPE, RestoreInProgress.EMPTY).isEmpty() == false
+        );
+
+        for (int i = 0; i < nbIndices; i++) {
+            futures.add( client().admin().cluster().prepareDeleteSnapshot(repository, "snapshot-" + i).execute());
+        }
+
+        unblockAllDataNodes(repository);
+
+        assertBusy(() -> {
+            for (ActionFuture<?> operation : futures) {
+                assertTrue(operation.isDone());
+                try {
+                    Object response = operation.get();
+                    if (response instanceof AcknowledgedResponse) {
+                        assertAcked((AcknowledgedResponse) response);
+                    } else if (response instanceof RestoreSnapshotResponse) {
+                        final RestoreSnapshotResponse restoreResponse = ((RestoreSnapshotResponse) response);
+                        assertThat(restoreResponse.getRestoreInfo().successfulShards(), greaterThanOrEqualTo(1));
+                        assertThat(restoreResponse.getRestoreInfo().failedShards(), equalTo(0));
+                    } else {
+                        throw new AssertionError("Unknown response type: " + response);
+                    }
+                } catch (ExecutionException e) {
+                    final Throwable csee = ExceptionsHelper.unwrap(e, ConcurrentSnapshotExecutionException.class);
+                    assertThat(csee, instanceOf(ConcurrentSnapshotExecutionException.class));
+                }
+            }
+        });
+
+        awaitNoMoreRunningOperations();
     }
 
     private static void assertSnapshotStatusCountOnRepo(String otherBlockedRepoName, int count) {
