@@ -10,8 +10,6 @@ package org.elasticsearch.xpack.searchablesnapshots;
 import org.apache.lucene.search.TotalHits;
 import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.action.ActionFuture;
-import org.elasticsearch.action.admin.cluster.snapshots.create.CreateSnapshotResponse;
-import org.elasticsearch.action.admin.cluster.snapshots.get.GetSnapshotsResponse;
 import org.elasticsearch.action.admin.cluster.snapshots.restore.RestoreSnapshotResponse;
 import org.elasticsearch.action.admin.indices.settings.get.GetSettingsResponse;
 import org.elasticsearch.action.support.master.AcknowledgedResponse;
@@ -24,19 +22,23 @@ import org.elasticsearch.cluster.metadata.RepositoryMetadata;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.core.Nullable;
+import org.elasticsearch.index.IndexNotFoundException;
 import org.elasticsearch.repositories.fs.FsRepository;
 import org.elasticsearch.snapshots.ConcurrentSnapshotExecutionException;
+import org.elasticsearch.snapshots.RestoreInfo;
 import org.elasticsearch.snapshots.SnapshotException;
-import org.elasticsearch.snapshots.SnapshotInfo;
 import org.elasticsearch.snapshots.SnapshotMissingException;
 import org.elasticsearch.snapshots.SnapshotRestoreException;
-import org.elasticsearch.snapshots.SnapshotState;
+import org.elasticsearch.test.junit.annotations.TestLogging;
+import org.elasticsearch.xpack.core.watcher.actions.Action;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 
@@ -53,7 +55,6 @@ import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.greaterThan;
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.instanceOf;
-import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.nullValue;
 
 public class SearchableSnapshotsRepositoryIntegTests extends BaseFrozenSearchableSnapshotsIntegTestCase {
@@ -531,12 +532,7 @@ public class SearchableSnapshotsRepositoryIntegTests extends BaseFrozenSearchabl
         final String index = "index-" + suffix;
         createAndPopulateIndex(index, Settings.builder().put(INDEX_SOFT_DELETES_SETTING.getKey(), true));
 
-        final TotalHits totalHits = internalCluster().client()
-            .prepareSearch(index)
-            .setTrackTotalHits(true)
-            .get()
-            .getHits()
-            .getTotalHits();
+        final TotalHits totalHits = internalCluster().client().prepareSearch(index).setTrackTotalHits(true).get().getHits().getTotalHits();
 
         final String snapshot = "snapshot-" + suffix;
         createSnapshot(repository, snapshot, List.of(index));
@@ -553,107 +549,188 @@ public class SearchableSnapshotsRepositoryIntegTests extends BaseFrozenSearchabl
     }
 
     public void testSearchableSnapshotsAreDeletedAfterMountedIndicesAreDeleted() throws Exception {
-        final String suffix = getTestName().toLowerCase(Locale.ROOT);
-        final String repository = "repository-" + suffix;
+        final String repository = "repository-" + randomAlphaOfLength(10).toLowerCase(Locale.ROOT);
         createRepository(logger, repository, "mock");
 
+        final List<String> snapshots = new ArrayList<>();
+        final int nbSnapshots = randomIntBetween(2, 10);
+        for (int s = 0; s < nbSnapshots; s++) {
+            createAndPopulateIndex("index", Settings.builder().put(INDEX_SOFT_DELETES_SETTING.getKey(), true));
+            final String snapshot = "snapshot-" + s;
+            createSnapshot(repository, snapshot, List.of("index"));
+            assertAcked(client().admin().indices().prepareDelete("index"));
+            snapshots.add(snapshot);
+        }
+
         final int nbIndices = randomIntBetween(2, 10);
-        final String[] mountedIndices = new String[nbIndices];
-
+        final Map<String, String> mounts = new HashMap<>(nbIndices);
         for (int i = 0; i < nbIndices; i++) {
-            final String index = "index-" + i;
-            createAndPopulateIndex(index, Settings.builder().put(INDEX_SOFT_DELETES_SETTING.getKey(), true));
-
-            final String snapshot = "snapshot-" + i;
-            createSnapshot(repository, snapshot, List.of(index));
-
-            final String mounted = "mounted-" + index;
-            mountSnapshot(repository, snapshot, index, mounted, deleteSnapshotIndexSettings(true), randomFrom(Storage.values()));
-            mountedIndices[i] = mounted;
+            final String mounted = "mounted-" + i;
+            final String snapshot = randomFrom(snapshots);
+            logger.info("--> mounting snapshot [{}] as index [{}]", snapshot, mounted);
+            mountSnapshot(repository, snapshot, "index", mounted, deleteSnapshotIndexSettings(true), randomFrom(Storage.values()));
+            mounts.put(mounted, snapshot);
         }
 
         awaitNoMoreRunningOperations();
-        blockAllDataNodes(repository);
 
         final List<ActionFuture<?>> futures = new ArrayList<>();
+        blockAllDataNodes(repository);
 
-        for (int i = 0; i < nbIndices; i++) {
-            if (randomBoolean()) {
-                final ActionFuture<?> future;
-                switch (randomInt(2)) {
-                    case 0:
-                        future = client().admin().cluster().prepareCreateSnapshot(repository, "other-" + i)
-                            .setIndices("index-" + i).setWaitForCompletion(true).execute();
-                        break;
-                    case 1:
-                        future = client().admin().cluster().prepareRestoreSnapshot(repository, "snapshot-" + i)
-                            .setIndices("index-" + i).setRenamePattern("(.+)").setRenameReplacement("$1-restored-" + i)
-                            .setWaitForCompletion(true).execute();
-                        break;
-                    case 2:
-                        future = client().admin().cluster().prepareCloneSnapshot(repository, "snapshot-" + i, "clone-" + i)
-                            .setIndices("index-" + i).execute();
-                        break;
-                    default:
-                        throw new AssertionError();
-                }
-                futures.add(future);
+        for (int i = 0; i < nbSnapshots; i++) {
+            final ActionFuture<?> future;
+            switch (randomInt(2)) {
+                case 0:
+                    future = client().admin()
+                        .cluster()
+                        .prepareRestoreSnapshot(repository, "snapshot-" + i)
+                        .setIndices("index")
+                        .setRenamePattern("(.+)")
+                        .setRenameReplacement("$1-restored-" + i)
+                        .setWaitForCompletion(true)
+                        .execute();
+                    break;
+                case 1:
+                    future = client().admin()
+                        .cluster()
+                        .prepareCloneSnapshot(repository, "snapshot-" + i, "clone-" + i)
+                        .setIndices("index")
+                        .execute();
+                    break;
+                case 2:
+                    future = client().admin()
+                        .cluster()
+                        .prepareDeleteSnapshot(repository, "snapshot-" + i)
+                        .execute();
+                    break;
+                default:
+                    throw new AssertionError();
             }
-        }
-        if (futures.isEmpty() == false) {
-            awaitClusterState(state ->
-                state.custom(SnapshotsInProgress.TYPE, SnapshotsInProgress.EMPTY).entries().size() > 0
-                    || state.custom(RestoreInProgress.TYPE, RestoreInProgress.EMPTY).isEmpty() == false);
+            futures.add(future);
         }
 
-        final List<String> remainingIndicesToDelete = new ArrayList<>(asSet(mountedIndices));
+        awaitClusterState(
+            state -> state.custom(SnapshotsInProgress.TYPE, SnapshotsInProgress.EMPTY).entries().size() > 0
+                || state.custom(RestoreInProgress.TYPE, RestoreInProgress.EMPTY).isEmpty() == false
+                || state.custom(SnapshotDeletionsInProgress.TYPE, SnapshotDeletionsInProgress.EMPTY).hasDeletionsInProgress()
+        );
+
+        final List<String> remainingIndicesToDelete = new ArrayList<>(mounts.keySet());
         while (remainingIndicesToDelete.isEmpty() == false) {
             final List<String> toDelete = randomValueOtherThanMany(List::isEmpty, () -> randomSubsetOf(remainingIndicesToDelete));
+            logger.info("--> deleting mounted indices [{}]",toDelete);
             futures.add(client().admin().indices().prepareDelete(toDelete.toArray(String[]::new)).execute());
             toDelete.forEach(remainingIndicesToDelete::remove);
         }
 
         unblockAllDataNodes(repository);
 
-        awaitNoMoreRunningOperations();
+        assertBusy(() ->  {
+            for (ActionFuture<?> future : futures) {
+                assertTrue(future.isDone());
+                try {
+                    Object response = future.get();
+                    if (response instanceof AcknowledgedResponse) {
+                        assertAcked((AcknowledgedResponse) response);
+
+                    } else if (response instanceof RestoreSnapshotResponse) {
+                        final RestoreSnapshotResponse restoreResponse = ((RestoreSnapshotResponse) response);
+                        assertThat(restoreResponse.getRestoreInfo().successfulShards(), greaterThanOrEqualTo(1));
+                        assertThat(restoreResponse.getRestoreInfo().failedShards(), equalTo(0));
+
+                    } else {
+                        throw new AssertionError("Unknown response type: " + response);
+                    }
+                } catch (ExecutionException e) {
+                    Throwable cause = ExceptionsHelper.unwrap(e, SnapshotException.class);
+                    if (cause == null) {
+                        cause = ExceptionsHelper.unwrapCause(e);
+                    }
+                    assertThat(cause,
+                        anyOf(
+                            instanceOf(ConcurrentSnapshotExecutionException.class),
+                            instanceOf(SnapshotMissingException.class)
+                        )
+                    );
+                    assertThat(
+                        cause.getMessage(),
+                        anyOf(
+                            containsString("cannot restore a snapshot already marked as deleted"),
+                            containsString("cannot clone a snapshot that is marked as deleted"),
+                            containsString("cannot clone from snapshot that is being deleted"),
+                            allOf(
+                                containsString('[' + repository + ":snapshot-"),
+                                containsString(" is missing")
+                            )
+                        )
+                    );
+                }
+            }
+        });
+
         awaitNoMoreSnapshotsDeletions();
 
-        for (ActionFuture<?> operation : futures) {
-            assertTrue(operation.isDone());
-            try {
-                Object response = operation.get();
-                if (response instanceof AcknowledgedResponse) {
-                    assertAcked((AcknowledgedResponse) response);
-
-                } else if (response instanceof CreateSnapshotResponse) {
-                    final SnapshotInfo snapshotInfo = ((CreateSnapshotResponse) response).getSnapshotInfo();
-                    assertThat(snapshotInfo.successfulShards(), is(snapshotInfo.totalShards()));
-                    assertThat(snapshotInfo.state(), is(SnapshotState.SUCCESS));
-
-                } else if (response instanceof RestoreSnapshotResponse) {
-                    final RestoreSnapshotResponse restoreResponse = ((RestoreSnapshotResponse) response);
-                    assertThat(restoreResponse.getRestoreInfo().successfulShards(), greaterThanOrEqualTo(1));
-                    assertThat(restoreResponse.getRestoreInfo().failedShards(), equalTo(0));
-
-                } else {
-                    throw new AssertionError("Unknown response type: " + response);
-                }
-            } catch (ExecutionException e) {
-                final Throwable csee = ExceptionsHelper.unwrap(e, ConcurrentSnapshotExecutionException.class);
-                assertThat(csee, instanceOf(ConcurrentSnapshotExecutionException.class));
-                assertThat(csee.getMessage(),
-                    anyOf(
-                        containsString("cannot clone a snapshot that is marked as deleted"),
-                        containsString("cannot restore a snapshot already marked as deleted"),
-                        containsString("cannot clone from snapshot that is being deleted")
-                    ));
+        assertBusy(() -> {
+            for (Map.Entry<String, String> mount : mounts.entrySet()) {
+                expectThrows(IndexNotFoundException.class,
+                    "Expected index to be deleted: " + mount.getKey(),
+                    () -> client().admin().indices().prepareGetIndex().setIndices(mount.getKey()).get());
+                expectThrows(SnapshotMissingException.class,
+                    "Expected snapshot to be deleted: " + mount.getValue(),
+                    () -> client().admin().cluster().prepareGetSnapshots(repository).setSnapshots(mount.getValue()).get());
             }
-        }
+        });
+    }
 
-        final GetSnapshotsResponse response = clusterAdmin().prepareGetSnapshots(repository).get();
-        for (SnapshotInfo snapshot : response.getSnapshots()) {
-            assertFalse(snapshot.snapshotId().getName().startsWith("snapshot-"));
-        }
+    public void testDeleteSnapshotWithOnGoingRestore() throws Exception {
+        final String repository = "repository-" + randomAlphaOfLength(10).toLowerCase(Locale.ROOT);
+        createRepository(logger, repository, "mock");
+
+        final String index = "index";
+        assertAcked(prepareCreate(index, Settings.builder().put(INDEX_SOFT_DELETES_SETTING.getKey(), true)));
+        ensureGreen(index);
+        populateIndex(index, 10_000);
+        refresh(index);
+
+        final TotalHits totalHits = internalCluster().client().prepareSearch(index).setTrackTotalHits(true).get().getHits().getTotalHits();
+        final NumShards numShards = getNumShards(index);
+
+        final String snapshot = "snapshot";
+        createSnapshot(repository, snapshot, List.of(index));
+        assertAcked(client().admin().indices().prepareDelete(index));
+
+        final String mounted = "mounted-" + index;
+        mountSnapshot(repository, snapshot, index, mounted, deleteSnapshotIndexSettings(true), randomFrom(Storage.values()));
+        assertHitCount(client().prepareSearch(mounted).setTrackTotalHits(true).get(), totalHits.value);
+
+        blockAllDataNodes(repository);
+
+        final ActionFuture<RestoreSnapshotResponse> restoreFuture = client().admin()
+            .cluster()
+            .prepareRestoreSnapshot(repository, snapshot)
+            .setIndices(index)
+            .setRenamePattern("(.+)")
+            .setRenameReplacement("restored-$1")
+            .setWaitForCompletion(true)
+            .execute();
+
+        awaitClusterState(state -> state.custom(RestoreInProgress.TYPE, RestoreInProgress.EMPTY).isEmpty() == false);
+
+        final ActionFuture<AcknowledgedResponse> deleteFuture = client().admin()
+            .indices().prepareDelete(mounted).execute();
+
+        awaitClusterState(state -> state.metadata().custom(RepositoriesMetadata.TYPE, RepositoriesMetadata.EMPTY)
+            .repository(repository).hasSnapshotsToDelete());
+
+        unblockAllDataNodes(repository);
+        awaitNoMoreSnapshotsDeletions();
+
+        final RestoreInfo restoreInfoResponse = restoreFuture.actionGet().getRestoreInfo();
+        assertThat(restoreInfoResponse.successfulShards(), equalTo(numShards.numPrimaries));
+        assertThat(restoreInfoResponse.failedShards(), equalTo(0));
+        assertAcked(deleteFuture.get());
+
+        expectThrows(SnapshotMissingException.class, () -> clusterAdmin().prepareDeleteSnapshot(repository, snapshot).get());
     }
 
     private static Settings deleteSnapshotIndexSettings(boolean value) {

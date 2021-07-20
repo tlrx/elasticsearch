@@ -1239,21 +1239,29 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
      */
     private static boolean assertSnapshotsToDeleteConsistency(ClusterState state) {
         final Map<String, Set<SnapshotId>> snapshotsToDelete = new HashMap<>();
-        for (RepositoryMetadata repository :
-            state.metadata().custom(RepositoriesMetadata.TYPE, RepositoriesMetadata.EMPTY).repositories()) {
+        for (RepositoryMetadata repository : state.metadata()
+            .custom(RepositoriesMetadata.TYPE, RepositoriesMetadata.EMPTY)
+            .repositories()) {
             snapshotsToDelete.put(repository.name(), Set.copyOf(repository.snapshotsToDelete()));
         }
         final Map<String, Set<SnapshotId>> onGoingSnapshotDeletions = new HashMap<>();
-        for (SnapshotDeletionsInProgress.Entry deletionInProgress :
-            state.custom(SnapshotDeletionsInProgress.TYPE, SnapshotDeletionsInProgress.EMPTY).getEntries()) {
+        for (SnapshotDeletionsInProgress.Entry deletionInProgress : state.custom(
+            SnapshotDeletionsInProgress.TYPE,
+            SnapshotDeletionsInProgress.EMPTY
+        ).getEntries()) {
             onGoingSnapshotDeletions.put(deletionInProgress.repository(), Set.copyOf(deletionInProgress.getSnapshots()));
         }
         for (String repository : Sets.union(snapshotsToDelete.keySet(), onGoingSnapshotDeletions.keySet())) {
             Set<SnapshotId> set1 = snapshotsToDelete.getOrDefault(repository, Set.of());
             Set<SnapshotId> set2 = onGoingSnapshotDeletions.getOrDefault(repository, Set.of());
-            assert Sets.intersection(set1, set2).isEmpty() :
-                "repository [" + repository + "] has snapshots deletions still marked as to delete [SnapshotDeletionsInProgress={"
-                    + onGoingSnapshotDeletions.get(repository) + "}, RepositoryMetadata={" + snapshotsToDelete.get(repository) + "}]";
+            assert Sets.intersection(set1, set2).isEmpty()
+                : "repository ["
+                    + repository
+                    + "] has snapshots deletions still marked as to delete [SnapshotDeletionsInProgress={"
+                    + onGoingSnapshotDeletions.get(repository)
+                    + "}, RepositoryMetadata={"
+                    + snapshotsToDelete.get(repository)
+                    + "}]";
         }
         return true;
     }
@@ -1261,34 +1269,38 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
     private final Set<String> repositoriesWithSnapshotsToDelete = Collections.synchronizedSet(new HashSet<>());
 
     /**
-     * Finds snapshots to delete in repositories metadata in the cluster state and triggers explicit snapshot delete requests.
+     * Finds snapshots to delete in the the cluster state repositories metadata and triggers explicit snapshot delete requests.
      *
      * @param state the current {@link ClusterState}
      */
     private void startDeletionOfSnapshotsToDelete(final ClusterState state) {
         final RepositoriesMetadata repositories = state.metadata().custom(RepositoriesMetadata.TYPE, RepositoriesMetadata.EMPTY);
         for (RepositoryMetadata repository : repositories.repositories()) {
+            logger.debug("{} RepositoryMetadata[{}]: {}", state.version(), repository.name(), repository.snapshotsToDelete());
+
             if (repository.hasSnapshotsToDelete()) {
                 final String repositoryName = repository.name();
                 if (repositoriesWithSnapshotsToDelete.add(repositoryName)) {
-                    logger.debug("[{}] found [{}] searchable snapshots to delete in repository, triggering snapshot deletions",
-                        repositoryName, repository.snapshotsToDelete().size());
+                    logger.debug(
+                        "found [{}] snapshots in repository [{}] to delete, triggering snapshot deletions",
+                        repository.snapshotsToDelete(),
+                        repositoryName
+                    );
 
                     final Queue<SnapshotId> queue = ConcurrentCollections.newQueue();
                     queue.addAll(repository.snapshotsToDelete());
 
                     final GroupedActionListener<Void> groupedListener = new GroupedActionListener<>(
-                        ActionListener.runAfter(
-                            ActionListener.wrap(() -> {
-                                final boolean removed = repositoriesWithSnapshotsToDelete.remove(repositoryName);
-                                assert queue.isEmpty() : repositoryName;
-                                assert removed : repositoryName;
-                            }),
-                            () -> startDeletionOfSnapshotsToDelete(clusterService.state())
-                        ),
+                        ActionListener.wrap(() -> {
+                            final boolean removed = repositoriesWithSnapshotsToDelete.remove(repositoryName);
+                            assert queue.isEmpty() : repositoryName;
+                            assert removed : repositoryName;
+                        }),
                         repository.snapshotsToDelete().size()
                     );
                     startNextSnapshotToDelete(threadPool.generic(), repositoryName, queue, groupedListener);
+                } else {
+                    logger.debug(" already on going processing for {} in {}", repositoryName, state.version());
                 }
             }
         }
@@ -1303,13 +1315,14 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
         final SnapshotId snapshotId = queue.poll();
         if (snapshotId != null) {
             executor.execute(new AbstractRunnable() {
+
                 @Override
                 protected void doRun() {
                     logger.debug("[{}] triggering deletion of searchable snapshot [{}]", repository, snapshotId);
                     deleteSnapshots(new DeleteSnapshotRequest(repository, snapshotId.getName()), new ActionListener<Void>() {
                         @Override
                         public void onResponse(Void unused) {
-                            logger.trace("[{}] searchable snapshot marked as to delete [{}] is now deleted", repository, snapshotId);
+                            logger.debug("[{}] searchable snapshot marked as to delete [{}] is now deleted", repository, snapshotId);
                             groupedListener.onResponse(null);
                             startNextSnapshotToDelete(executor, repository, queue, groupedListener);
                         }
@@ -1327,20 +1340,30 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
                 }
 
                 void retryOrFail(Exception e) {
-                    if (e instanceof ConcurrentSnapshotExecutionException) {
-                        logger.debug("[{}] failed to delete searchable snapshot [{}] (concurrent operation running) - retrying",
-                            repository, snapshotId);
-                        queue.add(snapshotId);
+                    if (e instanceof SnapshotMissingException) {
+                        logger.debug("[{}] searchable snapshot [{}] already deleted", repository, snapshotId);
+                        groupedListener.onResponse(null);
+                    } else if (e instanceof ConcurrentSnapshotExecutionException) {
+                        logger.debug(
+                            "[{}] failed to delete searchable snapshot [{}] (concurrent operation running) - retrying",
+                            repository,
+                            snapshotId
+                        );
+                        //queue.add(snapshotId);
+                        groupedListener.onFailure(null);
                     } else if (e instanceof RepositoryMissingException) {
-                        logger.debug("[{}] failed to delete searchable snapshot [{}] (repository removed)",
-                            repository, snapshotId);
+                        logger.debug("[{}] failed to delete searchable snapshot [{}] (repository removed)", repository, snapshotId);
                         groupedListener.onResponse(null);
                     } else {
+                        logger.warn(() -> new ParameterizedMessage("[{}] failed to delete searchable snapshot [{}]", repository, snapshotId), e);
                         groupedListener.onFailure(null);
                     }
                     startNextSnapshotToDelete(executor, repository, queue, groupedListener);
                 }
             });
+        } else {
+            logger.debug("[{}] triggering deletion of searchable snapshot done", repository);
+            startDeletionOfSnapshotsToDelete(clusterService.state());
         }
     }
 
@@ -2862,6 +2885,7 @@ public class SnapshotsService extends AbstractLifecycleComponent implements Clus
             for (SnapshotDeletionsInProgress.Entry deletionInProgress : snapshotDeletionsInProgress.getEntries()) {
                 final RepositoryMetadata repository = repositories.repository(deletionInProgress.repository());
                 if (repository != null && repository.hasSnapshotsToDelete()) {
+                    logger.debug("{} has {} and removing {}", state.version(), repository.snapshotsToDelete(), deletionInProgress.getSnapshots());
                     repositories = repositories.removeSnapshotsToDelete(repository.name(), deletionInProgress.getSnapshots());
                     updated = true;
                 }
