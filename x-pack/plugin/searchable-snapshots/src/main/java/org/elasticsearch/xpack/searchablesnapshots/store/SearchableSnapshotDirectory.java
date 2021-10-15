@@ -41,6 +41,7 @@ import org.elasticsearch.index.IndexSettings;
 import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.index.shard.ShardPath;
 import org.elasticsearch.index.snapshots.blobstore.BlobStoreIndexShardSnapshot;
+import org.elasticsearch.index.store.LuceneFilesExtensions;
 import org.elasticsearch.index.store.Store;
 import org.elasticsearch.indices.recovery.RecoveryState;
 import org.elasticsearch.repositories.IndexId;
@@ -71,10 +72,12 @@ import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -489,15 +492,18 @@ public class SearchableSnapshotDirectory extends BaseDirectory {
             return;
         }
 
+        final List<BlobStoreIndexShardSnapshot.FileInfo> fileInfos = sortFileInfos(snapshot().indexFiles());
+        logFileInfos(shardId, fileInfos);
+
         final BlockingQueue<Tuple<ActionListener<Void>, CheckedRunnable<Exception>>> queue = new LinkedBlockingQueue<>();
         final Executor executor = prewarmExecutor();
 
         final GroupedActionListener<Void> completionListener = new GroupedActionListener<>(ActionListener.wrap(voids -> {
             recoveryState.setPreWarmComplete();
             listener.onResponse(null);
-        }, listener::onFailure), snapshot().totalFileCount());
+        }, listener::onFailure), fileInfos.size());
 
-        for (BlobStoreIndexShardSnapshot.FileInfo file : snapshot().indexFiles()) {
+        for (BlobStoreIndexShardSnapshot.FileInfo file : fileInfos) {
             boolean hashEqualsContents = file.metadata().hashEqualsContents();
             if (hashEqualsContents || isExcludedFromCache(file.physicalName())) {
                 if (hashEqualsContents) {
@@ -756,6 +762,36 @@ public class SearchableSnapshotDirectory extends BaseDirectory {
         @Override
         public InputStream readBlob(String blobName, long position, long length) throws IOException {
             return blobStoreRepository.maybeRateLimitRestores(super.readBlob(blobName, position, length));
+        }
+    }
+
+    /**
+     * Sorts a list of FileInfo to prioritize small metadata files before larger, non-metadata files.
+     */
+    protected static List<BlobStoreIndexShardSnapshot.FileInfo> sortFileInfos(List<BlobStoreIndexShardSnapshot.FileInfo> files) {
+        final List<BlobStoreIndexShardSnapshot.FileInfo> sorted = new ArrayList<>(files);
+        sorted.sort((f1, f2) -> {
+            LuceneFilesExtensions ext1 = LuceneFilesExtensions.fromFile(f1.physicalName());
+            LuceneFilesExtensions ext2 = LuceneFilesExtensions.fromFile(f2.physicalName());
+            int compare = Boolean.compare(ext2 == null || ext2.isMetadata(), ext1 == null || ext1.isMetadata());
+            if (compare != 0) {
+                return compare; // segments and metadata files first
+            }
+            return Long.compare(f1.length(), f2.length());
+        });
+        return sorted;
+    }
+
+    private static void logFileInfos(ShardId shardId, List<BlobStoreIndexShardSnapshot.FileInfo> files) {
+        if (logger.isTraceEnabled()) {
+            final StringBuilder builder = new StringBuilder();
+            builder.append(String.format(Locale.ROOT, "%-20s %10s %10s %10s%n", "file name", "length", "nb parts", "checksum"));
+            for (BlobStoreIndexShardSnapshot.FileInfo f : files) {
+                builder.append(
+                    String.format(Locale.ROOT, "%-20s %10d %10d %10s%n", f.physicalName(), f.length(), f.numberOfParts(), f.checksum())
+                );
+            }
+            logger.trace("{} shard contains {} files:\n{}", shardId, files.size(), builder.toString());
         }
     }
 }

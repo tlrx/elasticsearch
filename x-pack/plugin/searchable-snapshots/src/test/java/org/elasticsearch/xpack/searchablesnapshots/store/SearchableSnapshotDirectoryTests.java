@@ -134,6 +134,7 @@ import static org.elasticsearch.xpack.searchablesnapshots.SearchableSnapshotsUti
 import static org.elasticsearch.xpack.searchablesnapshots.cache.full.CacheService.resolveSnapshotCache;
 import static org.elasticsearch.xpack.searchablesnapshots.store.SearchableSnapshotDirectory.getNonNullFileExt;
 import static org.hamcrest.Matchers.allOf;
+import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.greaterThan;
 import static org.hamcrest.Matchers.hasSize;
@@ -981,5 +982,83 @@ public class SearchableSnapshotDirectoryTests extends AbstractSearchableSnapshot
                 }
             };
         }
+    }
+
+    public void testSortFileInfos() {
+        List<BlobStoreIndexShardSnapshot.FileInfo> files = new ArrayList<>();
+        files.add(
+            new BlobStoreIndexShardSnapshot.FileInfo(
+                "0",
+                new StoreFileMetadata("_o_Lucene80_0.dvm", 2888, "mf6jl3", Version.CURRENT.toString()),
+                ByteSizeValue.ofTb(5L)
+            )
+        );
+        files.add(
+            new BlobStoreIndexShardSnapshot.FileInfo(
+                "1",
+                new StoreFileMetadata("_4s_Lucene84_0.fdt", 2500, "1p0shgv", Version.CURRENT.toString()),
+                ByteSizeValue.ofTb(5L)
+            )
+        );
+
+        files.add(
+            new BlobStoreIndexShardSnapshot.FileInfo(
+                "2",
+                new StoreFileMetadata("_33.nvm", 535, "mep2gq", Version.CURRENT.toString()),
+                ByteSizeValue.ofTb(5L)
+            )
+        );
+        files.add(
+            new BlobStoreIndexShardSnapshot.FileInfo(
+                "3",
+                new StoreFileMetadata("_4l.cfe", 2888, "10ezqz6", Version.CURRENT.toString()),
+                ByteSizeValue.ofTb(5L)
+            )
+        );
+        files.add(
+            new BlobStoreIndexShardSnapshot.FileInfo(
+                "4",
+                new StoreFileMetadata("_o_Lucene84_0.tip", 79996, "1wiur96", Version.CURRENT.toString()),
+                ByteSizeValue.ofTb(5L)
+            )
+        );
+        files.add(
+            new BlobStoreIndexShardSnapshot.FileInfo(
+                "5",
+                new StoreFileMetadata("segments_b", 333, "dsqsdez", Version.CURRENT.toString()),
+                ByteSizeValue.ofTb(5L)
+            )
+        );
+        files.add(
+            new BlobStoreIndexShardSnapshot.FileInfo(
+                "6",
+                new StoreFileMetadata("_4l.si", 373, "v2ojnq", Version.CURRENT.toString()),
+                ByteSizeValue.ofTb(5L)
+            )
+        );
+        files.add(
+            new BlobStoreIndexShardSnapshot.FileInfo(
+                "7",
+                new StoreFileMetadata("segments_c", 321, ",wxkdlmio", Version.CURRENT.toString()),
+                ByteSizeValue.ofTb(5L)
+            )
+        );
+        List<String> result = SearchableSnapshotDirectory.sortFileInfos(files)
+            .stream()
+            .map(BlobStoreIndexShardSnapshot.FileInfo::physicalName)
+            .collect(Collectors.toList());
+        assertThat(
+            result,
+            contains(
+                "segments_c",
+                "segments_b",
+                "_4l.si",
+                "_33.nvm",
+                "_o_Lucene80_0.dvm",
+                "_4l.cfe",
+                "_4s_Lucene84_0.fdt",
+                "_o_Lucene84_0.tip"
+            )
+        );
     }
 }
