@@ -21,6 +21,7 @@ import org.elasticsearch.action.admin.indices.stats.IndicesStatsResponse;
 import org.elasticsearch.action.admin.indices.stats.ShardStats;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.action.search.SearchType;
+import org.elasticsearch.action.support.ActiveShardCount;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.cluster.node.DiscoveryNode;
@@ -150,7 +151,7 @@ public class FrozenSearchableSnapshotsIntegTests extends BaseFrozenSearchableSna
         if (deletedBeforeMount) {
             assertAcked(client().admin().indices().prepareDelete(indexName));
         } else {
-            assertAcked(client().admin().indices().prepareClose(indexName));
+            assertAcked(client().admin().indices().prepareClose(indexName).setWaitForActiveShards(ActiveShardCount.DEFAULT));
         }
 
         logger.info("--> restoring partial index [{}] with cache enabled", restoredIndexName);
@@ -555,7 +556,7 @@ public class FrozenSearchableSnapshotsIntegTests extends BaseFrozenSearchableSna
         }
 
         // shut down shard and check that cache entries are actually removed
-        client().admin().indices().prepareClose("test-index").get();
+        client().admin().indices().prepareClose("test-index").setWaitForActiveShards(ActiveShardCount.DEFAULT).get();
         ensureGreen("test-index");
 
         for (IndicesService indicesService : internalCluster().getInstances(IndicesService.class)) {

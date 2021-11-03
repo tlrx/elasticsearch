@@ -8,6 +8,7 @@
 package org.elasticsearch.xpack.searchablesnapshots;
 
 import org.elasticsearch.ElasticsearchException;
+import org.elasticsearch.action.support.ActiveShardCount;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.client.OriginSettingClient;
 import org.elasticsearch.cluster.metadata.IndexMetadata;
@@ -60,7 +61,7 @@ public class SearchableSnapshotsSystemIndicesIntegTests extends BaseFrozenSearch
         assertThat(snapshotInfo.failedShards(), equalTo(0));
 
         if (randomBoolean()) {
-            assertAcked(client.admin().indices().prepareClose(indexName));
+            assertAcked(client.admin().indices().prepareClose(indexName).setWaitForActiveShards(ActiveShardCount.DEFAULT));
         } else {
             assertAcked(client.admin().indices().prepareDelete(indexName));
         }

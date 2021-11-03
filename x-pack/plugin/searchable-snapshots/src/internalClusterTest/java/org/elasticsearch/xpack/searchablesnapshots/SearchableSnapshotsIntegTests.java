@@ -162,7 +162,7 @@ public class SearchableSnapshotsIntegTests extends BaseSearchableSnapshotsIntegT
         if (deletedBeforeMount) {
             assertAcked(client().admin().indices().prepareDelete(indexName));
         } else {
-            assertAcked(client().admin().indices().prepareClose(indexName));
+            assertAcked(client().admin().indices().prepareClose(indexName).setWaitForActiveShards(ActiveShardCount.DEFAULT));
         }
 
         final boolean cacheEnabled = randomBoolean();
@@ -1009,7 +1009,7 @@ public class SearchableSnapshotsIntegTests extends BaseSearchableSnapshotsIntegT
 
         if (randomBoolean()) {
             logger.info("--> closing index before snapshot");
-            assertAcked(client().admin().indices().prepareClose(restoredIndexName));
+            assertAcked(client().admin().indices().prepareClose(restoredIndexName).setWaitForActiveShards(ActiveShardCount.DEFAULT));
         }
 
         // Back up the cluster to a different repo
