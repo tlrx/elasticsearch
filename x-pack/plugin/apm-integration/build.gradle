@@ -25,6 +25,12 @@ dependencies {
   implementation "io.opentelemetry:opentelemetry-sdk-metrics:${versions.opentelemetry}-alpha"
   implementation "io.opentelemetry:opentelemetry-semconv:${versions.opentelemetry}-alpha"
   implementation "io.opentelemetry:opentelemetry-exporter-logging:${versions.opentelemetry}"
+  implementation "io.opentelemetry:opentelemetry-exporter-otlp-trace:${versions.opentelemetry}"
+  implementation "io.opentelemetry:opentelemetry-exporter-otlp-common:${versions.opentelemetry}" // required by opentelemetry-exporter-otlp-trace
+  implementation "io.grpc:grpc-api:1.42.1"
+  implementation "io.grpc:grpc-stub:1.42.1"
+  implementation "com.squareup.okhttp3:okhttp:3.14.9" // required by opentelemetry-exporter-otlp-trace
+  implementation "com.squareup.okio:okio:1.17.2"      // required by okhttp3
 
   compileOnly project(path: xpackModule('core'))
   internalClusterTestImplementation(testArtifact(project(xpackModule('core'))))
@@ -44,6 +50,5 @@ tasks.named("thirdPartyAudit").configure {
   ignoreMissingClasses(
     'io.opentelemetry.sdk.logs.data.Body',
     'io.opentelemetry.sdk.logs.data.LogData',
-    'io.opentelemetry.sdk.logs.export.LogExporter'
   )
 }

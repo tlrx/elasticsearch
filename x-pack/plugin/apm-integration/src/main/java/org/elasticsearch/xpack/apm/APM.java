@@ -44,7 +44,7 @@ public class APM extends Plugin implements TracingPlugin {
         IndexNameExpressionResolver indexNameExpressionResolver,
         Supplier<RepositoriesService> repositoriesServiceSupplier
     ) {
-        tracer.set(new APMTracer());
+        tracer.set(new APMTracer(threadPool));
         return List.of(tracer.get());
     }
 }

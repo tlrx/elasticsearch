@@ -12,36 +12,89 @@ import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.api.trace.propagation.W3CTraceContextPropagator;
 import io.opentelemetry.context.propagation.ContextPropagators;
+import io.opentelemetry.exporter.otlp.internal.grpc.CustomOkHttpGrpcExporter;
+import io.opentelemetry.exporter.otlp.internal.grpc.GrpcExporter;
+import io.opentelemetry.exporter.otlp.internal.traces.TraceRequestMarshaler;
 import io.opentelemetry.sdk.OpenTelemetrySdk;
 import io.opentelemetry.sdk.common.CompletableResultCode;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
+import io.opentelemetry.sdk.trace.SpanProcessor;
 import io.opentelemetry.sdk.trace.data.SpanData;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import io.opentelemetry.sdk.trace.export.SpanExporter;
+import okhttp3.Dispatcher;
+import okhttp3.Headers;
+import okhttp3.OkHttpClient;
 
 import org.elasticsearch.Version;
 import org.elasticsearch.common.component.AbstractLifecycleComponent;
 import org.elasticsearch.common.util.concurrent.ConcurrentCollections;
 import org.elasticsearch.plugins.TracingPlugin;
 import org.elasticsearch.tasks.Task;
+import org.elasticsearch.threadpool.ThreadPool;
 
+import java.security.AccessController;
+import java.security.PrivilegedAction;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 public class APMTracer extends AbstractLifecycleComponent implements TracingPlugin.Tracer {
 
     public static final CapturingSpanExporter CAPTURING_SPAN_EXPORTER = new CapturingSpanExporter();
 
     private final Map<Long, Span> taskSpans = ConcurrentCollections.newConcurrentMap();
+    private final ThreadPool threadPool;
 
     private volatile Tracer tracer;
 
+    public APMTracer(ThreadPool threadPool) {
+        this.threadPool = Objects.requireNonNull(threadPool);
+    }
+
     @Override
     protected void doStart() {
+        final GrpcExporter<TraceRequestMarshaler> delegate = AccessController.doPrivileged(
+            (PrivilegedAction<GrpcExporter<TraceRequestMarshaler>>) () -> {
+                final OkHttpClient client = new OkHttpClient.Builder().dispatcher(new Dispatcher(threadPool.generic())).build();
+                return new CustomOkHttpGrpcExporter<>(
+                    "span",
+                    client,
+                    "https://<redacted>.apm.us-central1.gcp.foundit.no",
+                    new Headers.Builder()
+                        .add("Authorization", "redacted")
+                        .build(),
+                    false
+                );
+            }
+        );
+
+        // Basically what OtlpGrpcSpanExporter does, but not final
+        final SpanExporter exporter = new SpanExporter() {
+
+            @Override
+            public CompletableResultCode export(Collection<SpanData> spans) {
+                final TraceRequestMarshaler request = TraceRequestMarshaler.create(spans);
+                return delegate.export(request, spans.size());
+            }
+
+            @Override
+            public CompletableResultCode flush() {
+                return CompletableResultCode.ofSuccess();
+            }
+
+            @Override
+            public CompletableResultCode shutdown() {
+                return delegate.shutdown();
+            }
+        };
+
         SdkTracerProvider sdkTracerProvider = SdkTracerProvider.builder()
-            .addSpanProcessor(SimpleSpanProcessor.create(CAPTURING_SPAN_EXPORTER))
+            .addSpanProcessor(
+                SpanProcessor.composite(SimpleSpanProcessor.create(CAPTURING_SPAN_EXPORTER), SimpleSpanProcessor.create(exporter))
+            )
             .build();
 
         OpenTelemetry openTelemetry = OpenTelemetrySdk.builder()
