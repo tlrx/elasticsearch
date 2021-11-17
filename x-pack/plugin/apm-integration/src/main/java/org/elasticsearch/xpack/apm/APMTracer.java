@@ -8,7 +8,9 @@
 package org.elasticsearch.xpack.apm;
 
 import io.opentelemetry.api.OpenTelemetry;
+import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.common.Attributes;
+import io.opentelemetry.api.common.AttributesBuilder;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.SpanBuilder;
 import io.opentelemetry.api.trace.Tracer;
@@ -29,19 +31,26 @@ import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import io.opentelemetry.sdk.trace.export.SpanExporter;
 import io.opentelemetry.semconv.resource.attributes.ResourceAttributes;
 
+import io.opentelemetry.semconv.trace.attributes.SemanticAttributes;
+
 import org.elasticsearch.Version;
+import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.component.AbstractLifecycleComponent;
+import org.elasticsearch.common.network.NetworkAddress;
 import org.elasticsearch.common.settings.SecureSetting;
 import org.elasticsearch.common.settings.SecureString;
 import org.elasticsearch.common.settings.Setting;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.util.concurrent.ConcurrentCollections;
+import org.elasticsearch.common.util.concurrent.ThreadContext;
 import org.elasticsearch.plugins.TracingPlugin;
 import org.elasticsearch.tasks.Task;
 import org.elasticsearch.threadpool.ThreadPool;
+import org.elasticsearch.transport.Transport;
 
+import java.net.InetSocketAddress;
 import java.security.AccessController;
 import java.security.PrivilegedAction;
 import java.util.Collection;
@@ -51,6 +60,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Queue;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BiConsumer;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -155,6 +165,53 @@ public class APMTracer extends AbstractLifecycleComponent implements TracingPlug
         }
     }
 
+    @Override
+    public void onTraceStopped(TracingPlugin.Traceable traceable) {
+        final Span span = spans.remove(traceable.getSpanId());
+        if (span != null) {
+            for (Map.Entry<String, Object> entry : traceable.getAttributes().entrySet()) {
+                final Object value = entry.getValue();
+                if (value instanceof String) {
+                    span.setAttribute(entry.getKey(), (String) value);
+                } else if (value instanceof Long) {
+                    span.setAttribute(entry.getKey(), (Long) value);
+                } else if (value instanceof Integer) {
+                    span.setAttribute(entry.getKey(), (Integer) value);
+                } else if (value instanceof Double) {
+                    span.setAttribute(entry.getKey(), (Double) value);
+                } else if (value instanceof Boolean) {
+                    span.setAttribute(entry.getKey(), (Boolean) value);
+                } else {
+                    throw new IllegalArgumentException(
+                        "span attributes do not support value type of [" + value.getClass().getCanonicalName() + "]"
+                    );
+                }
+            }
+            span.end();
+        }
+    }
+
+    /**
+     * See https://github.com/open-telemetry/opentelemetry-specification/blob/main/specification/trace/semantic_conventions/span-general.md#general-network-connection-attributes
+     */
+    public void addNetworkAttributes(String id, Transport.Connection connection) {
+        final Span span = spans.get(id);
+        if (span != null) {
+            span.setAttribute(SemanticAttributes.MESSAGING_SYSTEM.getKey(), "elasticsearch");
+            final DiscoveryNode remoteNode = connection.getNode();
+            span.setAttribute(SemanticAttributes.MESSAGING_DESTINATION, remoteNode.getId());
+            final InetSocketAddress remoteAddress = remoteNode.getAddress().address();
+            span.setAttribute(SemanticAttributes.NET_TRANSPORT.getKey(), SemanticAttributes.NetTransportValues.IP_TCP);
+            span.setAttribute(SemanticAttributes.NET_PEER_IP.getKey(), NetworkAddress.format(remoteAddress.getAddress()));
+            span.setAttribute(SemanticAttributes.NET_PEER_PORT.getKey(), String.valueOf(remoteAddress.getPort()));
+            span.setAttribute(SemanticAttributes.NET_PEER_NAME.getKey(), remoteAddress.getHostName());
+            final InetSocketAddress localAddress = clusterService.localNode().getAddress().address();
+            span.setAttribute(SemanticAttributes.NET_HOST_IP.getKey(), NetworkAddress.format(localAddress.getAddress()));
+            span.setAttribute(SemanticAttributes.NET_HOST_PORT.getKey(), String.valueOf(localAddress.getPort()));
+            span.setAttribute(SemanticAttributes.NET_HOST_NAME.getKey(), localAddress.getHostName());
+        }
+    }
+
     private Context getParentSpanContext(OpenTelemetry openTelemetry) {
         // If we already have a non-root span context that should be the parent
         if (Context.current() != Context.root()) {
@@ -162,8 +219,9 @@ public class APMTracer extends AbstractLifecycleComponent implements TracingPlug
         }
 
         // If not let us check for a parent context in the thread context
-        String traceParent = threadPool.getThreadContext().getHeader(Task.TRACE_PARENT);
-        String traceState = threadPool.getThreadContext().getHeader(Task.TRACE_STATE);
+        final ThreadContext threadContext = threadPool.getThreadContext();
+        String traceParent = threadContext.getHeader(Task.TRACE_PARENT);
+        String traceState = threadContext.getHeader(Task.TRACE_STATE);
         if (traceParent != null) {
             Map<String, String> traceContextMap = new HashMap<>();
             // traceparent and tracestate should match the keys used by W3CTraceContextPropagator
@@ -186,14 +244,6 @@ public class APMTracer extends AbstractLifecycleComponent implements TracingPlug
             openTelemetry.getPropagators().getTextMapPropagator().inject(Context.current(), spanHeaders, Map::put);
             spanHeaders.keySet().removeIf(k -> isSupportedContextKey(k) == false);
             return spanHeaders;
-        }
-    }
-
-    @Override
-    public void onTraceStopped(TracingPlugin.Traceable traceable) {
-        final Span span = spans.remove(traceable.getSpanId());
-        if (span != null) {
-            span.end();
         }
     }
 

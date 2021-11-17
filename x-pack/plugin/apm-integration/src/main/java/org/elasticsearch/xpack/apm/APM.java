@@ -99,10 +99,12 @@ public class APM extends Plugin implements TracingPlugin, NetworkPlugin {
             TransportRequestOptions options,
             TransportResponseHandler<T> handler
         ) {
-            if (tracer.get() == null) {
+            final APMTracer apmTracer = tracer.get();
+            if (apmTracer == null) {
                 sender.sendRequest(connection, action, request, options, handler);
             } else {
-                var headers = tracer.get().getSpanHeadersById(String.valueOf(request.getParentTask().getId()));
+                apmTracer.addNetworkAttributes(String.valueOf(request.getParentTask().getId()), connection);
+                var headers = apmTracer.getSpanHeadersById(String.valueOf(request.getParentTask().getId()));
                 if (headers != null) {
                     try (var ignore = threadContext.removeRequestHeaders(TRACE_HEADERS)) {
                         threadContext.putHeader(headers);
@@ -114,4 +116,5 @@ public class APM extends Plugin implements TracingPlugin, NetworkPlugin {
             }
         }
     }
+
 }
