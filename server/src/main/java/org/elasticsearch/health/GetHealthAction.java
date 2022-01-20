@@ -27,6 +27,8 @@ import org.elasticsearch.xcontent.XContentBuilder;
 
 import java.io.IOException;
 import java.util.Collections;
+import java.util.List;
+import java.util.Map;
 
 public class GetHealthAction extends ActionType<GetHealthAction.Response> {
 
@@ -40,9 +42,11 @@ public class GetHealthAction extends ActionType<GetHealthAction.Response> {
     public static class Response extends ActionResponse implements ToXContentObject {
 
         private final ClusterName clusterName;
+        private final Map<String, List<HealthIndicator>> healthIndicators;
 
-        public Response(ClusterName clusterName) {
+        public Response(ClusterName clusterName, Map<String, List<HealthIndicator>> healthIndicators) {
             this.clusterName = clusterName;
+            this.healthIndicators = healthIndicators;
         }
 
         public Response(StreamInput in) {
@@ -54,6 +58,10 @@ public class GetHealthAction extends ActionType<GetHealthAction.Response> {
             throw new AssertionError("GetHealthAction should not be sent over the wire.");
         }
 
+        public Map<String, List<HealthIndicator>> getHealthIndicators() {
+            return healthIndicators;
+        }
+
         @Override
         public XContentBuilder toXContent(XContentBuilder builder, ToXContent.Params params) throws IOException {
             builder.startObject();
@@ -62,6 +70,15 @@ public class GetHealthAction extends ActionType<GetHealthAction.Response> {
             builder.field("cluster_name", clusterName.value());
             builder.array("impacts", Collections.emptyList());
             builder.startObject("components");
+            if (healthIndicators != null) {
+                for (Map.Entry<String, List<HealthIndicator>> entry : healthIndicators.entrySet()) {
+                    builder.startArray(entry.getKey());
+                    for (HealthIndicator indicator : entry.getValue()) {
+                        indicator.toXContent(builder, params);
+                    }
+                    builder.endArray();
+                }
+            }
             builder.endObject();
             return builder.endObject();
         }
@@ -78,20 +95,23 @@ public class GetHealthAction extends ActionType<GetHealthAction.Response> {
     public static class TransportAction extends org.elasticsearch.action.support.TransportAction<Request, Response> {
 
         private final ClusterService clusterService;
+        private final HealthService healthService;
 
         @Inject
         public TransportAction(
             final ActionFilters actionFilters,
             final TransportService transportService,
-            final ClusterService clusterService
+            final ClusterService clusterService,
+            final HealthService healthService
         ) {
             super(NAME, actionFilters, transportService.getTaskManager());
             this.clusterService = clusterService;
+            this.healthService = healthService;
         }
 
         @Override
         protected void doExecute(Task task, Request request, ActionListener<Response> listener) {
-            listener.onResponse(new Response(clusterService.getClusterName()));
+            listener.onResponse(new Response(clusterService.getClusterName(), healthService.getHealthIndicatorss()));
         }
     }
 }
