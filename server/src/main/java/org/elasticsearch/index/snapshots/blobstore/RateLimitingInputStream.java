@@ -8,11 +8,10 @@
 
 package org.elasticsearch.index.snapshots.blobstore;
 
-import org.apache.lucene.store.RateLimiter;
-
 import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 
 /**
@@ -26,8 +25,13 @@ public class RateLimitingInputStream extends FilterInputStream {
 
     private long bytesSinceLastRateLimit;
 
+    final AtomicBoolean registerd = new AtomicBoolean();
+
     public interface Listener {
         void onPause(long nanos);
+        default void onBytes(int bytes) {
+            ;
+        }
     }
 
     public RateLimitingInputStream(InputStream delegate, Supplier<RateLimiter> rateLimiterSupplier, Listener listener) {
@@ -40,14 +44,18 @@ public class RateLimitingInputStream extends FilterInputStream {
         bytesSinceLastRateLimit += bytes;
         final RateLimiter rateLimiter = rateLimiterSupplier.get();
         if (rateLimiter != null) {
+            if (registerd.compareAndSet(false, true)) {
+                rateLimiter.register(this);
+            }
             if (bytesSinceLastRateLimit >= rateLimiter.getMinPauseCheckBytes()) {
-                long pause = rateLimiter.pause(bytesSinceLastRateLimit);
+                long pause = rateLimiter.pause(bytesSinceLastRateLimit, this);
                 bytesSinceLastRateLimit = 0;
                 if (pause > 0) {
                     listener.onPause(pause);
                 }
             }
         }
+        listener.onBytes(bytes);
     }
 
     @Override
@@ -64,5 +72,19 @@ public class RateLimitingInputStream extends FilterInputStream {
             maybePause(n);
         }
         return n;
+    }
+
+    @Override
+    public void close() throws IOException {
+        try  {
+            super.close();
+        } finally {
+            if (registerd.compareAndSet(true, false)) {
+                final RateLimiter rateLimiter = rateLimiterSupplier.get();
+                if (rateLimiter != null) {
+                    rateLimiter.unregister(this);
+                }
+            }
+        }
     }
 }

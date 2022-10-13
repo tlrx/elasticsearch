@@ -44,8 +44,10 @@ import org.elasticsearch.cluster.routing.UnassignedInfo;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.Numbers;
 import org.elasticsearch.common.Strings;
+import org.elasticsearch.common.metrics.CounterMetric;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.ByteSizeUnit;
+import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.index.Index;
 import org.elasticsearch.index.IndexService;
@@ -53,6 +55,8 @@ import org.elasticsearch.index.engine.Engine;
 import org.elasticsearch.index.engine.EngineTestCase;
 import org.elasticsearch.index.shard.IndexShard;
 import org.elasticsearch.index.shard.ShardId;
+import org.elasticsearch.index.snapshots.blobstore.RateLimiter;
+import org.elasticsearch.index.snapshots.blobstore.RateLimitingInputStream;
 import org.elasticsearch.indices.IndicesService;
 import org.elasticsearch.repositories.IndexId;
 import org.elasticsearch.repositories.RepositoriesService;
@@ -60,8 +64,12 @@ import org.elasticsearch.repositories.RepositoryData;
 import org.elasticsearch.repositories.RepositoryException;
 import org.elasticsearch.repositories.blobstore.BlobStoreRepository;
 import org.elasticsearch.snapshots.mockstore.MockRepository;
+import org.elasticsearch.threadpool.ScalingExecutorBuilder;
+import org.elasticsearch.threadpool.TestThreadPool;
 import org.elasticsearch.threadpool.ThreadPool;
 
+import java.io.ByteArrayInputStream;
+import java.io.OutputStream;
 import java.nio.channels.SeekableByteChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -73,6 +81,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
@@ -1143,6 +1152,171 @@ public class SharedClusterSnapshotRestoreIT extends AbstractSnapshotIntegTestCas
             .prepareUpdateSettings()
             .setPersistentSettings(Settings.builder().putNull(INDICES_RECOVERY_MAX_BYTES_PER_SEC_SETTING.getKey()).build())
             .get();
+    }
+
+    private static final String RATES_CLIENT = "client";
+
+    private static void writeInputToNull(
+        ThreadPool threadPool,
+        RateLimitingInputStream stream,
+        ByteSizeValue blockSize,
+        CounterMetric runtimeCounter,
+        CountDownLatch latch
+    ) throws Exception {
+        threadPool.executor(RATES_CLIENT).execute(() -> {
+            try {
+                long msBefore = System.currentTimeMillis();
+                try (OutputStream outputStream = OutputStream.nullOutputStream()) {
+                    byte[] buffer = new byte[(int) blockSize.getBytes()];
+                    org.elasticsearch.core.Streams.copy(stream, outputStream, buffer);
+                }
+                long msAfter = System.currentTimeMillis();
+                long ms = msAfter - msBefore;
+                runtimeCounter.inc(ms);
+                latch.countDown();
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        });
+    }
+
+    private void doConcurrentRates(ByteSizeValue rateLimit, byte[] bytesArray, List<ByteSizeValue> blockSizes) throws Exception {
+        boolean unlimited = rateLimit == null;
+        if (unlimited) rateLimit = ByteSizeValue.ofBytes(Long.MAX_VALUE);
+        RateLimiter.SimpleRateLimiter rateLimiter = new RateLimiter.SimpleRateLimiter(rateLimit.getMbFrac());
+        List<CounterMetric> nsSleepCounters = new ArrayList<>(blockSizes.size());
+        List<CounterMetric> msRuntimeCounters = new ArrayList<>(blockSizes.size());
+        List<CounterMetric> bytesCounters = new ArrayList<>(blockSizes.size());
+        List<RateLimitingInputStream> rateLimitedStreams = new ArrayList<>(blockSizes.size());
+
+        blockSizes.forEach((b) -> {
+            CounterMetric nsSleepCounter = new CounterMetric();
+            nsSleepCounters.add(nsSleepCounter);
+            msRuntimeCounters.add(new CounterMetric());
+            CounterMetric bytesCounter = new CounterMetric();
+            bytesCounters.add(bytesCounter);
+            ByteArrayInputStream stream = new ByteArrayInputStream(bytesArray);
+            rateLimitedStreams.add(new RateLimitingInputStream(stream, () -> rateLimiter, new RateLimitingInputStream.Listener() {
+                @Override
+                public void onPause(long nanos) {
+                    nsSleepCounter.inc(nanos);
+                }
+
+                @Override
+                public void onBytes(int bytes) {
+                    bytesCounter.inc(bytes);
+                }
+            }));
+        });
+
+        int threads = blockSizes.size() + (unlimited ? 0 : 1); // +1 for sampler thread
+        final ThreadPool threadPool = new TestThreadPool(
+            "tp",
+            new ScalingExecutorBuilder(RATES_CLIENT, threads, threads, TimeValue.ZERO, true, RATES_CLIENT)
+        );
+
+        final CountDownLatch countdownLatch = new CountDownLatch(threads);
+
+        for (int i = 0; i < blockSizes.size(); i++) {
+            writeInputToNull(threadPool, rateLimitedStreams.get(i), blockSizes.get(i), msRuntimeCounters.get(i), countdownLatch);
+        }
+
+        // Sampler thread
+        if (unlimited == false) threadPool.executor(RATES_CLIENT).execute(() -> {
+            // Output CSV header
+            String header = "ms";
+            for (int i = 0; i < blockSizes.size(); i++) {
+                header += ",blockSize" + (i+1) + ",nsSleep" + (i+1) + ",bytes" + (i+1);
+            }
+            System.err.println(header);
+
+            long msBeginning = System.currentTimeMillis();
+            long msBefore = System.currentTimeMillis();
+            boolean doWhile = countdownLatch.getCount() != 1;
+            Consumer<Long> writeLine = (ms) -> {
+                String line = ms.toString();
+                for (int i = 0; i < blockSizes.size(); i++) {
+                    line += "," + blockSizes.get(i) + "," + nsSleepCounters.get(i).count() + "," + bytesCounters.get(i).count();
+                }
+                System.err.println(line);
+            };
+            while (doWhile) {
+                long msNow = System.currentTimeMillis();
+                if (msNow - msBefore > 1000) { // sample every second
+                    msBefore = msNow;
+                    writeLine.accept(Long.valueOf(msNow - msBeginning));
+                }
+                try {
+                    doWhile = waitUntil(() -> countdownLatch.getCount() == 1, 10, TimeUnit.MILLISECONDS) == false;
+                } catch (InterruptedException e) {
+                    ;
+                }
+            }
+            writeLine.accept(Long.valueOf(System.currentTimeMillis() - msBeginning)); // final line
+            countdownLatch.countDown();
+        });
+
+        long timeout = (bytesArray.length / rateLimit.getBytes()) * blockSizes.size() + 10;
+        if (countdownLatch.await(timeout, TimeUnit.SECONDS) == false) {
+            logger.warn("--> waiting for countdown latch timed out");
+        }
+
+        if (ThreadPool.terminate(threadPool, 10, TimeUnit.SECONDS) == false) {
+            logger.warn("--> threadpool termination timed out");
+        }
+
+        logger.warn("--> Results:");
+        for (int i = 0; i < blockSizes.size(); i++) {
+            logger.warn(
+                "Stream "
+                    + i
+                    + ", with block size "
+                    + blockSizes.get(i)
+                    + ", finished with runtime "
+                    + msRuntimeCounters.get(i).count()
+                    + " ms and "
+                    + nsSleepCounters.get(i).count()
+                    + " ns of sleep and having read a total of "
+                    + bytesCounters.get(i).count()
+                    + " bytes."
+            );
+        }
+    }
+
+    private void doConcurrentRatesWithWarmup(ByteSizeValue rateLimit, int seconds, List<ByteSizeValue> blockSizes) throws Exception {
+        final long bytes = seconds * rateLimit.getBytes() / blockSizes.size(); // dividing by #threads since they'll work concurrently
+        byte[] bytesArray = randomByteArrayOfLength((int) bytes);
+        logger.warn("=== Starting experiment ===");
+        logger.warn(
+            "--> File size to read is "
+                + bytes
+                + " bytes, and rate is "
+                + rateLimit
+                + "/sec, for "
+                + seconds
+                + " seconds for "
+                + blockSizes.size()
+                + " threads with block sizes: "
+                + blockSizes
+                + "."
+        );
+        logger.warn("--> First doing a warmup with a very high rate limit");
+        doConcurrentRates(null, bytesArray, blockSizes);
+        logger.warn("--> Now doing the experiment with the rate limit of " + rateLimit + "/s");
+        doConcurrentRates(rateLimit, bytesArray, blockSizes);
+    }
+
+    public void testConcurrentRates() throws Exception {
+        doConcurrentRatesWithWarmup(ByteSizeValue.ofMb(1), 15,
+            Arrays.asList(
+                ByteSizeValue.ofKb(1),
+                ByteSizeValue.ofKb(128),
+                ByteSizeValue.ofKb(512),
+                ByteSizeValue.ofKb(512)
+            )
+        );
+        //doConcurrentRatesWithWarmup(ByteSizeValue.ofMb(1), 10, Arrays.asList(ByteSizeValue.ofKb(128), ByteSizeValue.ofKb(512)));
+        //doConcurrentRatesWithWarmup(ByteSizeValue.ofMb(1), 10, Arrays.asList(ByteSizeValue.ofKb(128), ByteSizeValue.ofKb(128)));
     }
 
     public void testSnapshotStatus() throws Exception {
