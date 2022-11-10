@@ -13,6 +13,7 @@ import org.elasticsearch.core.Nullable;
 import org.elasticsearch.index.Index;
 import org.elasticsearch.index.IndexService;
 import org.elasticsearch.index.IndexSettings;
+import org.elasticsearch.index.store.Store;
 import org.elasticsearch.indices.cluster.IndicesClusterStateService.AllocatedIndices.IndexRemovalReason;
 
 /**
@@ -147,9 +148,9 @@ public interface IndexEventListener {
     /**
      * Called when the given shards store is created. The shard store is created before the shard is created.
      *
-     * @param shardId the shard ID the store belongs to
+     * @param store the newly created shard store
      */
-    default void onStoreCreated(ShardId shardId) {}
+    default void onStoreCreated(Store store) {}
 
     /**
      * Called when the given shards store is closed. The store is closed once all resource have been released on the store.

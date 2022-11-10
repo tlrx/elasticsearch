@@ -492,7 +492,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
                 lock,
                 new StoreCloseListener(shardId, () -> eventListener.onStoreClosed(shardId))
             );
-            eventListener.onStoreCreated(shardId);
+            eventListener.onStoreCreated(store);
             indexShard = new IndexShard(
                 routing,
                 this.indexSettings,

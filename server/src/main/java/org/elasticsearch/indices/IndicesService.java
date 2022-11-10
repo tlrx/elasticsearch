@@ -110,6 +110,7 @@ import org.elasticsearch.index.shard.IndexShardState;
 import org.elasticsearch.index.shard.IndexingOperationListener;
 import org.elasticsearch.index.shard.IndexingStats;
 import org.elasticsearch.index.shard.ShardId;
+import org.elasticsearch.index.store.Store;
 import org.elasticsearch.indices.breaker.CircuitBreakerService;
 import org.elasticsearch.indices.cluster.IndicesClusterStateService;
 import org.elasticsearch.indices.fielddata.cache.IndicesFieldDataCache;
@@ -604,7 +605,7 @@ public class IndicesService extends AbstractLifecycleComponent
         List<IndexEventListener> finalListeners = new ArrayList<>(builtInListeners);
         final IndexEventListener onStoreClose = new IndexEventListener() {
             @Override
-            public void onStoreCreated(ShardId shardId) {
+            public void onStoreCreated(Store store) {
                 indicesRefCount.incRef();
             }
 
@@ -668,7 +669,7 @@ public class IndicesService extends AbstractLifecycleComponent
                 }
 
                 @Override
-                public void onStoreCreated(ShardId shardId) {
+                public void onStoreCreated(Store store) {
                     assert false : "temp index should not trigger store creation";
                     throw new ElasticsearchException("temp index should not trigger store creation [{}]", index);
                 }

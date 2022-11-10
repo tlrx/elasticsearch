@@ -16,6 +16,7 @@ import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.search.similarities.BM25Similarity;
 import org.apache.lucene.search.similarities.Similarity;
+import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.MMapDirectory;
 import org.apache.lucene.util.Constants;
 import org.apache.lucene.util.SetOnce;
@@ -156,6 +157,8 @@ public final class IndexModule {
     private final AtomicBoolean frozen = new AtomicBoolean(false);
     private final BooleanSupplier allowExpensiveQueries;
     private final Map<String, IndexStorePlugin.RecoveryStateFactory> recoveryStateFactories;
+
+    private final SetOnce<CheckedFunction<Directory, Directory, IOException>> indexDirectoryWrapper = new SetOnce<>();
 
     /**
      * Construct the index module for the index with the specified index settings. The index module contains extension points for plugins
@@ -350,6 +353,11 @@ public final class IndexModule {
         this.indexReaderWrapper.set(indexReaderWrapperFactory);
     }
 
+    public void setDirectoryWrapper(CheckedFunction<Directory, Directory, IOException> wrapper) {
+        ensureNotFrozen();
+        this.indexDirectoryWrapper.set(Objects.requireNonNull(wrapper));
+    }
+
     IndexEventListener freeze() { // pkg private for testing
         if (this.frozen.compareAndSet(false, true)) {
             return new CompositeIndexEventListener(indexSettings, indexEventListeners);
@@ -508,7 +516,7 @@ public final class IndexModule {
         }
     }
 
-    private static IndexStorePlugin.DirectoryFactory getDirectoryFactory(
+    private IndexStorePlugin.DirectoryFactory getDirectoryFactory(
         final IndexSettings indexSettings,
         final Map<String, IndexStorePlugin.DirectoryFactory> indexStoreFactories
     ) {
@@ -535,6 +543,11 @@ public final class IndexModule {
             if (factory == null) {
                 throw new IllegalArgumentException("Unknown store type [" + storeType + "]");
             }
+        }
+        final CheckedFunction<Directory, Directory, IOException> directoryWrapper = this.indexDirectoryWrapper.get();
+        assert frozen.get() : "IndexModule configuration not frozen";
+        if (directoryWrapper != null) {
+            return (idxSettings, shardPath) -> directoryWrapper.apply(factory.newDirectory(idxSettings, shardPath));
         }
         return factory;
     }

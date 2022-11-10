@@ -17,6 +17,7 @@ import org.elasticsearch.index.shard.IndexEventListener;
 import org.elasticsearch.index.shard.IndexShard;
 import org.elasticsearch.index.shard.IndexShardState;
 import org.elasticsearch.index.shard.ShardId;
+import org.elasticsearch.index.store.Store;
 import org.elasticsearch.indices.cluster.IndicesClusterStateService.AllocatedIndices.IndexRemovalReason;
 
 import java.util.Collection;
@@ -215,10 +216,10 @@ final class CompositeIndexEventListener implements IndexEventListener {
     }
 
     @Override
-    public void onStoreCreated(ShardId shardId) {
+    public void onStoreCreated(Store store) {
         for (IndexEventListener listener : listeners) {
             try {
-                listener.onStoreCreated(shardId);
+                listener.onStoreCreated(store);
             } catch (Exception e) {
                 logger.warn("failed to invoke on store created", e);
                 throw e;
