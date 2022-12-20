@@ -23,6 +23,7 @@ public interface RecoveryPlannerService {
         int translogOps,
         Version targetVersion,
         boolean useSnapshots,
+        boolean isPrimaryRelocation,
         ActionListener<ShardRecoveryPlan> listener
     );
 }

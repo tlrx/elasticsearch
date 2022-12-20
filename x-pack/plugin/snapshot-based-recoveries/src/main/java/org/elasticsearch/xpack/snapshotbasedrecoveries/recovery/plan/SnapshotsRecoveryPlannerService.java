@@ -54,6 +54,7 @@ public class SnapshotsRecoveryPlannerService implements RecoveryPlannerService {
         int translogOps,
         Version targetVersion,
         boolean useSnapshots,
+        boolean isPrimaryRelocation,
         ActionListener<ShardRecoveryPlan> listener
     ) {
         // Fallback to source only recovery if the target node is in an incompatible version
