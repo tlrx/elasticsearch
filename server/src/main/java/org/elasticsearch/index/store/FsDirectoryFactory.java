@@ -8,10 +8,12 @@
 
 package org.elasticsearch.index.store;
 
+import org.apache.lucene.index.IndexFileNames;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSDirectory;
 import org.apache.lucene.store.FileSwitchDirectory;
 import org.apache.lucene.store.FilterDirectory;
+import org.apache.lucene.store.FilterIndexInput;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.LockFactory;
@@ -31,7 +33,10 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Predicate;
 
 public class FsDirectoryFactory implements IndexStorePlugin.DirectoryFactory {
 
@@ -66,18 +71,104 @@ public class FsDirectoryFactory implements IndexStorePlugin.DirectoryFactory {
                 // Use Lucene defaults
                 final FSDirectory primaryDirectory = FSDirectory.open(location, lockFactory);
                 if (primaryDirectory instanceof MMapDirectory mMapDirectory) {
-                    return new HybridDirectory(lockFactory, setPreload(mMapDirectory, lockFactory, preLoadExtensions));
+                    return wrap(new HybridDirectory(lockFactory, setPreload(mMapDirectory, lockFactory, preLoadExtensions)));
                 } else {
-                    return primaryDirectory;
+                    return wrap(primaryDirectory);
                 }
             case MMAPFS:
-                return setPreload(new MMapDirectory(location, lockFactory), lockFactory, preLoadExtensions);
+                return wrap(setPreload(new MMapDirectory(location, lockFactory), lockFactory, preLoadExtensions));
             case SIMPLEFS:
             case NIOFS:
-                return new NIOFSDirectory(location, lockFactory);
+                return wrap(new NIOFSDirectory(location, lockFactory));
             default:
                 throw new AssertionError("unexpected built-in store type [" + type + "]");
         }
+    }
+
+    private static FilterDirectory wrap(Directory directory) {
+        return new TrackingDeletionsDirectory(directory);
+    }
+
+    static final Predicate<String> isDocValueUpdateFile = file -> {
+        try {
+            return file.startsWith("_") && IndexFileNames.parseGeneration(file) > 0L;
+        } catch (Exception e) {
+            return false;
+        }
+    };
+
+    static final long SLEEP_IN_MILLIS = 20L;
+    static final long SLEEP_AFTER_BYTES = 16777216L; // 16 mb
+
+    private static class TrackingDeletionsDirectory extends FilterDirectory {
+
+        private final Map<String, Exception> deletes = new ConcurrentHashMap<>();
+
+        protected TrackingDeletionsDirectory(Directory in) {
+            super(in);
+        }
+
+        private void ensureNotDeleted(String name) {
+            if (deletes.containsKey(name)) {
+                throw new IllegalStateException("Reading from deleted IndexInput [" + name + ']');
+            }
+        }
+
+        @Override
+        public void deleteFile(String name) throws IOException {
+            if (isDocValueUpdateFile.test(name)) {
+                // capture the stack at the time the generational doc value file is deleted
+                deletes.put(name, new Exception());
+            }
+            super.deleteFile(name);
+        }
+
+        @Override
+        public void close() throws IOException {
+            deletes.clear();
+            super.close();
+        }
+
+        @Override
+        public IndexInput openInput(String name, IOContext context) throws IOException {
+            try {
+                Thread.sleep(SLEEP_IN_MILLIS);
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+            return new FilterIndexInput("slow(" + name + ')', super.openInput(name, context)) {
+
+                long readBytes = 0L;
+
+                @Override
+                public void readBytes(byte[] b, int offset, int len) throws IOException {
+                    ensureNotDeleted(name);
+                    if (readBytes + len >= SLEEP_AFTER_BYTES) {
+                        readBytes = 0L;
+                        try {
+                            Thread.sleep(SLEEP_IN_MILLIS);
+                        } catch (InterruptedException e) {
+                            throw new RuntimeException(e);
+                        }
+                    }
+                    super.readBytes(b, offset, len);
+                    readBytes += len;
+                }
+
+                @Override
+                public IndexInput slice(String sliceDescription, long offset, long length) throws IOException {
+                    ensureNotDeleted(name);
+                    return super.slice(sliceDescription, offset, length);
+                }
+
+                @Override
+                public IndexInput clone() {
+                    ensureNotDeleted(name);
+                    return super.clone();
+                }
+            };
+        }
+
     }
 
     public static MMapDirectory setPreload(MMapDirectory mMapDirectory, LockFactory lockFactory, Set<String> preLoadExtensions)
