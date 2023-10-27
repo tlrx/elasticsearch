@@ -44,21 +44,25 @@ public class SubscribableListener<T> implements ActionListener<T> {
      * Create a {@link SubscribableListener} which is incomplete.
      */
     public SubscribableListener() {
-        this(EMPTY);
+        this(CompletionOrder.FIFO);
+    }
+
+    public SubscribableListener(CompletionOrder completionOrder) {
+        this(EMPTY, completionOrder);
     }
 
     /**
      * Create a {@link SubscribableListener} which has already succeeded with the given result.
      */
     public static <T> SubscribableListener<T> newSucceeded(T result) {
-        return new SubscribableListener<>(new SuccessResult<>(result));
+        return new SubscribableListener<>(new SuccessResult<>(result), CompletionOrder.FIFO);
     }
 
     /**
      * Create a {@link SubscribableListener} which has already failed with the given exception.
      */
     public static <T> SubscribableListener<T> newFailed(Exception exception) {
-        return new SubscribableListener<>(new FailureResult(exception, exception));
+        return new SubscribableListener<>(new FailureResult(exception, exception), CompletionOrder.FIFO);
     }
 
     /**
@@ -71,8 +75,23 @@ public class SubscribableListener<T> implements ActionListener<T> {
         return listener;
     }
 
-    private SubscribableListener(Object initialState) {
+    public enum CompletionOrder {
+        /**
+         * Complete listeners in the order in which their subscriptions were received
+         */
+        FIFO,
+
+        /**
+         * Complete listeners in the reverse order in which their subscriptions were received
+         */
+        LIFO
+    }
+
+    private final CompletionOrder completionOrder;
+
+    private SubscribableListener(Object initialState, CompletionOrder completionOrder) {
         state = initialState;
+        this.completionOrder = completionOrder;
     }
 
     /**
@@ -259,18 +278,21 @@ public class SubscribableListener<T> implements ActionListener<T> {
                     boolean completed = tryComplete(result, listener);
                     assert completed;
                 } else if (currentState instanceof Cell currCell) {
-                    // multiple subscribers, but they are currently in reverse order of subscription so reverse them back
-                    Cell prevCell = null;
-                    while (true) {
-                        final Cell nextCell = currCell.next;
-                        currCell.next = prevCell;
-                        if (nextCell == null) {
-                            break;
+                    // multiple subscribers
+                    if (completionOrder == CompletionOrder.FIFO) {
+                        // multiple subscribers, but they are currently in reverse order of subscription so reverse them back
+                        Cell prevCell = null;
+                        while (true) {
+                            final Cell nextCell = currCell.next;
+                            currCell.next = prevCell;
+                            if (nextCell == null) {
+                                break;
+                            }
+                            prevCell = currCell;
+                            currCell = nextCell;
                         }
-                        prevCell = currCell;
-                        currCell = nextCell;
                     }
-                    // now they are in subscription order, complete them
+                    // now complete subscribers
                     while (currCell != null) {
                         boolean completed = tryComplete(result, (ActionListener<T>) currCell.listener);
                         assert completed;
