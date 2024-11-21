@@ -402,6 +402,7 @@ public class MetadataRolloverService {
             assert createIndexClusterStateRequest.performReroute() == false
                 : "rerouteCompletionIsNotRequired() assumes reroute is not called by underlying service";
 
+            // Here
             newState = createIndexService.applyCreateIndexRequest(
                 currentState,
                 createIndexClusterStateRequest,

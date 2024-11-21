@@ -1856,7 +1856,13 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
             final ShardId shardId = shardRouting.shardId();
             OriginalIndices finalIndices = originalIndices.get(shardId.getIndex().getName());
             assert finalIndices != null;
-            list[i++] = new SearchShardIterator(clusterAlias, shardId, shardRouting.getShardRoutings(), finalIndices);
+            var shardsIt = new SearchShardIterator(clusterAlias, shardId, shardRouting.getShardRoutings(), finalIndices);
+            if (clusterState.blocks().hasIndexBlock(shardId.getIndex().getName(), IndexMetadata.INDEX_REFRESH_BLOCK)) {
+                // Skip the search on search shards until the INDEX_REFRESH_BLOCK is removed
+                // TODO This probably doesn't work for all search use case like PIT, can_match, field caps etc.
+                shardsIt.skip(true);
+            }
+            list[i++] = shardsIt;
         }
         // the returned list must support in-place sorting, so this is the most memory efficient we can do here
         return Arrays.asList(list);

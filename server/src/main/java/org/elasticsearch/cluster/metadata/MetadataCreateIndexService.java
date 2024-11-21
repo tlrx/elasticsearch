@@ -28,6 +28,7 @@ import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.ClusterStateUpdateTask;
 import org.elasticsearch.cluster.block.ClusterBlockLevel;
 import org.elasticsearch.cluster.block.ClusterBlocks;
+import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.node.DiscoveryNodes;
 import org.elasticsearch.cluster.routing.IndexRoutingTable;
 import org.elasticsearch.cluster.routing.RoutingTable;
@@ -106,8 +107,10 @@ import java.util.stream.IntStream;
 
 import static java.util.Collections.emptyMap;
 import static java.util.stream.Collectors.toList;
+import static org.elasticsearch.cluster.metadata.IndexMetadata.INDEX_BLOCKS_REFRESH_SETTING;
 import static org.elasticsearch.cluster.metadata.IndexMetadata.INDEX_NUMBER_OF_REPLICAS_SETTING;
 import static org.elasticsearch.cluster.metadata.IndexMetadata.INDEX_NUMBER_OF_SHARDS_SETTING;
+import static org.elasticsearch.cluster.metadata.IndexMetadata.INDEX_REFRESH_BLOCK;
 import static org.elasticsearch.cluster.metadata.IndexMetadata.INDEX_SHRINK_INITIAL_RECOVERY_KEY;
 import static org.elasticsearch.cluster.metadata.IndexMetadata.SETTING_AUTO_EXPAND_REPLICAS;
 import static org.elasticsearch.cluster.metadata.IndexMetadata.SETTING_CREATION_DATE;
@@ -139,6 +142,7 @@ public class MetadataCreateIndexService {
     private final boolean forbidPrivateIndexSettings;
     private final Set<IndexSettingProvider> indexSettingProviders;
     private final ThreadPool threadPool;
+    private final boolean useRefreshBlock;
 
     public MetadataCreateIndexService(
         final Settings settings,
@@ -166,6 +170,7 @@ public class MetadataCreateIndexService {
         this.shardLimitValidator = shardLimitValidator;
         this.indexSettingProviders = indexSettingProviders.getIndexSettingProviders();
         this.threadPool = threadPool;
+        this.useRefreshBlock = DiscoveryNode.isStateless(settings);
     }
 
     /**
@@ -535,6 +540,7 @@ public class MetadataCreateIndexService {
             );
 
             indexService.getIndexEventListener().beforeIndexAddedToCluster(indexMetadata.getIndex(), indexMetadata.getSettings());
+            ClusterState beforeUpdate = currentState;
 
             ClusterState updated = clusterStateCreateIndex(
                 currentState,
@@ -542,11 +548,33 @@ public class MetadataCreateIndexService {
                 metadataTransformer,
                 allocationService.getShardRoutingRoleStrategy()
             );
+            if (useRefreshBlock) {
+                updated = maybeAddRefreshBlock(indexMetadata, sourceMetadata, updated);
+            }
             if (request.performReroute()) {
                 updated = allocationService.reroute(updated, "index [" + indexMetadata.getIndex().getName() + "] created", rerouteListener);
             }
             return updated;
         });
+    }
+
+    private static ClusterState maybeAddRefreshBlock(IndexMetadata indexMetadata, IndexMetadata sourceMetadata, ClusterState clusterState) {
+        if (sourceMetadata != null || indexMetadata.getNumberOfReplicas() == 0) {
+            return clusterState;
+        }
+        return ClusterState.builder(clusterState)
+            .blocks(
+                ClusterBlocks.builder().blocks(clusterState.blocks()).addIndexBlock(indexMetadata.getIndex().getName(), INDEX_REFRESH_BLOCK)
+            )
+            .metadata(
+                Metadata.builder(clusterState.metadata())
+                    .put(
+                        IndexMetadata.builder(indexMetadata)
+                            .settings(Settings.builder().put(indexMetadata.getSettings()).put(INDEX_BLOCKS_REFRESH_SETTING.getKey(), true))
+                            .settingsVersion(indexMetadata.getSettingsVersion() + 1L)
+                    )
+            )
+            .build();
     }
 
     /**

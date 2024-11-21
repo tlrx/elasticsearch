@@ -19,6 +19,7 @@ import org.elasticsearch.action.support.replication.ReplicationOperation;
 import org.elasticsearch.action.support.replication.ReplicationResponse;
 import org.elasticsearch.action.support.replication.TransportReplicationAction;
 import org.elasticsearch.cluster.action.shard.ShardStateAction;
+import org.elasticsearch.cluster.block.ClusterBlockLevel;
 import org.elasticsearch.cluster.routing.IndexShardRoutingTable;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.io.stream.StreamInput;
@@ -76,6 +77,11 @@ public class TransportShardRefreshAction extends TransportReplicationAction<
         // registers the unpromotable version of shard refresh action
         new TransportUnpromotableShardRefreshAction(clusterService, transportService, shardStateAction, actionFilters, indicesService);
         this.refreshExecutor = transportService.getThreadPool().executor(ThreadPool.Names.REFRESH);
+    }
+
+    @Override
+    public ClusterBlockLevel indexBlockLevel() {
+        return ClusterBlockLevel.REFRESH;
     }
 
     @Override

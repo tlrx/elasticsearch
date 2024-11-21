@@ -23,6 +23,8 @@ import org.elasticsearch.cluster.ClusterStateObserver;
 import org.elasticsearch.cluster.ClusterStateTaskExecutor;
 import org.elasticsearch.cluster.ClusterStateTaskListener;
 import org.elasticsearch.cluster.NotMasterException;
+import org.elasticsearch.cluster.block.ClusterBlockLevel;
+import org.elasticsearch.cluster.block.ClusterBlocks;
 import org.elasticsearch.cluster.coordination.FailedToCommitClusterStateException;
 import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.cluster.metadata.Metadata;
@@ -39,6 +41,7 @@ import org.elasticsearch.common.Priority;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
+import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.util.concurrent.EsExecutors;
 import org.elasticsearch.core.Nullable;
 import org.elasticsearch.core.TimeValue;
@@ -70,6 +73,7 @@ import java.util.Set;
 
 import static org.apache.logging.log4j.Level.DEBUG;
 import static org.apache.logging.log4j.Level.ERROR;
+import static org.elasticsearch.cluster.metadata.IndexMetadata.INDEX_BLOCKS_REFRESH_SETTING;
 import static org.elasticsearch.cluster.service.MasterService.isPublishFailureException;
 import static org.elasticsearch.core.Strings.format;
 
@@ -747,6 +751,9 @@ public class ShardStateAction {
             try {
                 maybeUpdatedState = allocationService.applyStartedShards(initialState, shardRoutingsToBeApplied);
 
+                // TODO do not check all indices on every started shard update + merge with time ranges updates
+                maybeUpdatedState = removeRefreshBlocks(maybeUpdatedState);
+
                 if (updatedTimestampRanges.isEmpty() == false) {
                     final Metadata.Builder metadataBuilder = Metadata.builder(maybeUpdatedState.metadata());
                     for (Map.Entry<Index, ClusterStateTimeRanges> updatedTimeRangesEntry : updatedTimestampRanges.entrySet()) {
@@ -774,6 +781,42 @@ public class ShardStateAction {
             }
 
             return maybeUpdatedState;
+        }
+
+        private static ClusterState removeRefreshBlocks(ClusterState clusterState) {
+            var indicesWithRefreshBlock = clusterState.blocks().indices(ClusterBlockLevel.REFRESH);
+            if (indicesWithRefreshBlock.isEmpty()) {
+                return clusterState;
+            }
+
+            ClusterBlocks.Builder blocks = null;
+            Metadata.Builder metadata = null;
+            for (String indexWithRefreshBlock : indicesWithRefreshBlock.keySet()) {
+                var indexRoutingTable = clusterState.routingTable().index(indexWithRefreshBlock);
+                if (indexRoutingTable.allPrimaryShardsActive() == false) {
+                    continue;
+                }
+                var indexMetadata = clusterState.metadata().index(indexWithRefreshBlock);
+                if (indexMetadata.getNumberOfReplicas() == 0
+                    || indexRoutingTable.allShards().allMatch(shards -> shards.getActiveSearchShardCount() > 0)) {
+                    if (blocks == null) {
+                        blocks = ClusterBlocks.builder(clusterState.blocks());
+                    }
+                    blocks.removeIndexBlock(indexWithRefreshBlock, IndexMetadata.INDEX_REFRESH_BLOCK);
+                    if (metadata == null) {
+                        metadata = Metadata.builder(clusterState.metadata());
+                    }
+                    var settings = Settings.builder().put(indexMetadata.getSettings());
+                    settings.remove(INDEX_BLOCKS_REFRESH_SETTING.getKey());
+                    metadata.put(
+                        IndexMetadata.builder(indexMetadata).settings(settings).settingsVersion(indexMetadata.getSettingsVersion() + 1L)
+                    );
+                }
+            }
+            if (blocks == null) {
+                return clusterState;
+            }
+            return ClusterState.builder(clusterState).blocks(blocks).metadata(metadata).build();
         }
 
         private static boolean assertStartedIndicesHaveCompleteTimestampRanges(ClusterState clusterState) {
