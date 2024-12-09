@@ -589,7 +589,9 @@ public final class StoreRecovery {
             .<Void>andThen(l -> {
                 indexShard.getIndexEventListener().afterFilesRestoredFromRepository(indexShard);
                 final Store store = indexShard.store();
-                bootstrap(indexShard, store);
+                if (indexShard.indexSettings.getIndexMetadata().isSearchableSnapshot() == false) {
+                    bootstrap(indexShard, store);
+                }
                 assert indexShard.shardRouting.primary() : "only primary shards can recover from store";
                 writeEmptyRetentionLeasesFile(indexShard);
                 indexShard.openEngineAndRecoverFromTranslog(l);

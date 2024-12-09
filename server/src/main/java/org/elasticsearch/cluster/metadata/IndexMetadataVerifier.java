@@ -111,6 +111,10 @@ public class IndexMetadataVerifier {
     private static void checkSupportedVersion(IndexMetadata indexMetadata, IndexVersion minimumIndexCompatibilityVersion) {
         boolean isSupportedVersion = indexMetadata.getCompatibilityVersion().onOrAfter(minimumIndexCompatibilityVersion);
         if (isSupportedVersion == false) {
+            if (indexMetadata.getCreationVersion()
+                .onOrAfter(IndexVersion.getMinimumCompatibleIndexVersion(minimumIndexCompatibilityVersion.id()))) {
+                return;
+            }
             throw new IllegalStateException(
                 "The index "
                     + indexMetadata.getIndex()

@@ -612,23 +612,21 @@ public class SearchableSnapshotDirectory extends BaseDirectory {
         final Path cacheDir = CacheService.getShardCachePath(shardPath).resolve(snapshotId.getUUID());
         Files.createDirectories(cacheDir);
 
-        return new InMemoryNoOpCommitDirectory(
-            new SearchableSnapshotDirectory(
-                blobContainerSupplier,
-                lazySnapshot::getOrCompute,
-                blobStoreCacheService,
-                initialRepository.getMetadata().name(),
-                snapshotId,
-                indexId,
-                shardPath.getShardId(),
-                indexSettings.getSettings(),
-                currentTimeNanosSupplier,
-                cache,
-                cacheDir,
-                shardPath,
-                threadPool,
-                sharedBlobCacheService
-            )
+        return new SearchableSnapshotDirectory(
+            blobContainerSupplier,
+            lazySnapshot::getOrCompute,
+            blobStoreCacheService,
+            initialRepository.getMetadata().name(),
+            snapshotId,
+            indexId,
+            shardPath.getShardId(),
+            indexSettings.getSettings(),
+            currentTimeNanosSupplier,
+            cache,
+            cacheDir,
+            shardPath,
+            threadPool,
+            sharedBlobCacheService
         );
     }
 
@@ -636,8 +634,6 @@ public class SearchableSnapshotDirectory extends BaseDirectory {
         while (dir != null) {
             if (dir instanceof SearchableSnapshotDirectory) {
                 return (SearchableSnapshotDirectory) dir;
-            } else if (dir instanceof InMemoryNoOpCommitDirectory) {
-                dir = ((InMemoryNoOpCommitDirectory) dir).getRealDirectory();
             } else if (dir instanceof FilterDirectory) {
                 dir = ((FilterDirectory) dir).getDelegate();
             } else {

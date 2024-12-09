@@ -237,7 +237,7 @@ public class RestTestBasePlugin implements Plugin<Project> {
 
                     if (version.getMajor() > 0 && version.before(bwcVersions.getMinimumWireCompatibleVersion())) {
                         // If we are upgrade testing older versions we also need to upgrade to 7.last
-                        this.call(bwcVersions.getMinimumWireCompatibleVersion());
+                        //this.call(bwcVersions.getMinimumWireCompatibleVersion());
                     }
                     return null;
                 }

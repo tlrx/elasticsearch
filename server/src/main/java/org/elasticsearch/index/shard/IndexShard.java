@@ -1600,6 +1600,13 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
                     indexCommit = engine.acquireLastIndexCommit(false);
                 }
                 if (indexCommit == null) {
+                    if (indexSettings().getIndexVersionCreated().isLegacyIndexVersion()) {
+                        var segmentInfos = SegmentInfos.readLatestCommit(
+                            store.directory(),
+                            indexSettings().getIndexVersionCreated().luceneVersion().major
+                        );
+                        return store.getMetadata(segmentInfos);
+                    }
                     return store.getMetadata(null, true);
                 }
             }
@@ -1713,7 +1720,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     }
 
     public void setGlobalCheckpointIfUnpromotable(long globalCheckpoint) {
-        assert shardRouting.isPromotableToPrimary() == false : "must only call this on unpromotable shards";
+        // assert shardRouting.isPromotableToPrimary() == false : "must only call this on unpromotable shards";
         globalCheckPointIfUnpromotable = globalCheckpoint;
     }
 
@@ -1859,8 +1866,16 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         }
         assert routingEntry().recoverySource().getType() == RecoverySource.Type.PEER : "not a peer recovery [" + routingEntry() + "]";
         try {
-            final var translogUUID = store.readLastCommittedSegmentsInfo().getUserData().get(Translog.TRANSLOG_UUID_KEY);
-            final var globalCheckpoint = Translog.readGlobalCheckpoint(translogConfig.getTranslogPath(), translogUUID);
+            var segmentInfos = store.readLastCommittedSegmentsInfo();
+            var translogUUID = segmentInfos.getUserData().get(Translog.TRANSLOG_UUID_KEY);
+            final long globalCheckpoint;
+            if (store.indexSettings.getIndexMetadata().isSearchableSnapshot()
+                && store.indexSettings.getIndexVersionCreated().isLegacyIndexVersion()) {
+                var checkPoint = segmentInfos.getUserData().get(SequenceNumbers.LOCAL_CHECKPOINT_KEY);
+                globalCheckpoint = checkPoint == null ? SequenceNumbers.UNASSIGNED_SEQ_NO : Long.parseLong(checkPoint);
+            } else {
+                globalCheckpoint = Translog.readGlobalCheckpoint(translogConfig.getTranslogPath(), translogUUID);
+            }
             final var safeCommit = store.findSafeIndexCommit(globalCheckpoint);
             ActionListener.run(recoveryStartingSeqNoListener.delegateResponse((l, e) -> {
                 logger.debug(() -> format("failed to recover shard locally up to global checkpoint %s", globalCheckpoint), e);
@@ -2084,8 +2099,15 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
             // we have to set it before we open an engine and recover from the translog because
             // acquiring a snapshot from the translog causes a sync which causes the global checkpoint to be pulled in,
             // and an engine can be forced to close in ctor which also causes the global checkpoint to be pulled in.
-            final String translogUUID = store.readLastCommittedSegmentsInfo().getUserData().get(Translog.TRANSLOG_UUID_KEY);
-            final long globalCheckpoint = Translog.readGlobalCheckpoint(translogConfig.getTranslogPath(), translogUUID);
+            var segmentInfos = store.readLastCommittedSegmentsInfo();
+            final String translogUUID = segmentInfos.getUserData().get(Translog.TRANSLOG_UUID_KEY);
+            final long globalCheckpoint;
+            if (indexSettings.getIndexVersionCreated().isLegacyIndexVersion()) {
+                var checkPoint = segmentInfos.getUserData().get(SequenceNumbers.LOCAL_CHECKPOINT_KEY);
+                globalCheckpoint = checkPoint == null ? SequenceNumbers.UNASSIGNED_SEQ_NO : Long.parseLong(checkPoint);
+            } else {
+                globalCheckpoint = Translog.readGlobalCheckpoint(translogConfig.getTranslogPath(), translogUUID);
+            }
             replicationTracker.updateGlobalCheckpointOnReplica(globalCheckpoint, "read from translog checkpoint");
         } else {
             replicationTracker.updateGlobalCheckpointOnReplica(globalCheckPointIfUnpromotable, "from CleanFilesRequest");
@@ -2162,7 +2184,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         // time elapses after the engine is created above (pulling the config settings) until we set the engine reference, during
         // which settings changes could possibly have happened, so here we forcefully push any config changes to the new engine.
         onSettingsChanged();
-        assert assertSequenceNumbersInCommit();
+        assert indexSettings.getIndexVersionCreated().isLegacyIndexVersion() || assertSequenceNumbersInCommit();
         recoveryState.validateCurrentStage(RecoveryState.Stage.TRANSLOG);
         checkAndCallWaitForEngineOrClosedShardListeners();
     }

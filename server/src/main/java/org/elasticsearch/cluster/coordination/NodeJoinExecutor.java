@@ -377,6 +377,9 @@ public class NodeJoinExecutor implements ClusterStateTaskExecutor<JoinTask> {
                 );
             }
             if (idxMetadata.getCompatibilityVersion().before(minSupportedVersion)) {
+                if (idxMetadata.getCreationVersion().onOrAfter(IndexVersion.getMinimumCompatibleIndexVersion(minSupportedVersion.id()))) {
+                    return;
+                }
                 throw new IllegalStateException(
                     "index "
                         + idxMetadata.getIndex()

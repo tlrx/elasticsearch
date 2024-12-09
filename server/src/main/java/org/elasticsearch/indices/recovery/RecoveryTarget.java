@@ -510,11 +510,13 @@ public class RecoveryTarget extends AbstractRefCounted implements RecoveryTarget
             // first, we go and move files that were created with the recovery id suffix to
             // the actual names, its ok if we have a corrupted index here, since we have replicas
             // to recover from in case of a full cluster shutdown just when this code executes...
-            multiFileWriter.renameAllTempFiles();
             final Store store = store();
             store.incRef();
             try {
-                if (indexShard.routingEntry().isPromotableToPrimary()) {
+                if (indexShard.routingEntry().isPromotableToPrimary()
+                    && indexShard.indexSettings().getIndexVersionCreated().isLegacyIndexVersion() == false) {
+                    multiFileWriter.renameAllTempFiles();
+
                     store.cleanupAndVerify("recovery CleanFilesRequestHandler", sourceMetadata);
                     final String translogUUID = Translog.createEmptyTranslog(
                         indexShard.shardPath().resolveTranslog(),
