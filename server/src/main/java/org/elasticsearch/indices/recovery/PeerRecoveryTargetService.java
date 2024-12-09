@@ -49,7 +49,6 @@ import org.elasticsearch.index.shard.IndexShardClosedException;
 import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.index.shard.ShardLongFieldRange;
 import org.elasticsearch.index.shard.ShardNotFoundException;
-import org.elasticsearch.index.shard.StoreRecovery;
 import org.elasticsearch.index.store.Store;
 import org.elasticsearch.index.translog.Translog;
 import org.elasticsearch.index.translog.TranslogCorruptedException;
@@ -387,13 +386,6 @@ public class PeerRecoveryTargetService implements IndexEventListener {
                     if (indexShard.indexSettings().getIndexMetadata().isSearchableSnapshot()) {
                         // for searchable snapshots, peer recovery is treated similarly to recovery from snapshot
                         indexShard.getIndexEventListener().afterFilesRestoredFromRepository(indexShard);
-                        final Store store = indexShard.store();
-                        store.incRef();
-                        try {
-                            StoreRecovery.bootstrap(indexShard, store);
-                        } finally {
-                            store.decRef();
-                        }
                     }
                     indexShard.recoverLocallyUpToGlobalCheckpoint(ActionListener.assertOnce(l));
                 })
@@ -417,13 +409,15 @@ public class PeerRecoveryTargetService implements IndexEventListener {
                         snapshot = Store.MetadataSnapshot.EMPTY;
                     }
 
-                    Store store = indexShard.store();
-                    store.incRef();
-                    try {
-                        logger.debug(() -> format("cleaning up index directory for %s before recovery", indexShard.shardId()));
-                        store.cleanupAndVerify("cleanup before peer recovery", snapshot);
-                    } finally {
-                        store.decRef();
+                    if (indexShard.indexSettings().getIndexVersionCreated().isLegacyIndexVersion() == false) {
+                        Store store = indexShard.store();
+                        store.incRef();
+                        try {
+                            logger.debug(() -> format("cleaning up index directory for %s before recovery", indexShard.shardId()));
+                            store.cleanupAndVerify("cleanup before peer recovery", snapshot);
+                        } finally {
+                            store.decRef();
+                        }
                     }
                     return startingSeqNo;
                 })
@@ -489,7 +483,13 @@ public class PeerRecoveryTargetService implements IndexEventListener {
                 // index.
                 try {
                     final String expectedTranslogUUID = metadataSnapshot.commitUserData().get(Translog.TRANSLOG_UUID_KEY);
-                    final long globalCheckpoint = Translog.readGlobalCheckpoint(recoveryTarget.translogLocation(), expectedTranslogUUID);
+                    final long globalCheckpoint;
+                    if (recoveryTarget.indexShard().indexSettings().getIndexVersionCreated().isLegacyIndexVersion()) {
+                        var checkPoint = metadataSnapshot.commitUserData().get(SequenceNumbers.LOCAL_CHECKPOINT_KEY);
+                        globalCheckpoint = checkPoint == null ? SequenceNumbers.UNASSIGNED_SEQ_NO : Long.parseLong(checkPoint);
+                    } else {
+                        globalCheckpoint = Translog.readGlobalCheckpoint(recoveryTarget.translogLocation(), expectedTranslogUUID);
+                    }
                     assert globalCheckpoint + 1 >= startingSeqNo : "invalid startingSeqNo " + startingSeqNo + " >= " + globalCheckpoint;
                 } catch (IOException | TranslogCorruptedException e) {
                     logGlobalCheckpointWarning(logger, startingSeqNo, e);

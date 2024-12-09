@@ -516,7 +516,11 @@ public class RecoverySourceHandler {
             final Store.MetadataSnapshot recoverySourceMetadata;
             final String shardStateIdentifier;
             try {
-                recoverySourceMetadata = store.getMetadata(snapshot);
+                if (store.indexSettings().getIndexVersionCreated().isLegacyIndexVersion()) {
+                    recoverySourceMetadata = store.getMetadata(store.readLastCommittedSegmentsInfo());
+                } else {
+                    recoverySourceMetadata = store.getMetadata(snapshot);
+                }
                 shardStateIdentifier = SnapshotShardsService.getShardStateId(shard, snapshot);
             } catch (CorruptIndexException | IndexFormatTooOldException | IndexFormatTooNewException ex) {
                 shard.failShard("recovery", ex);

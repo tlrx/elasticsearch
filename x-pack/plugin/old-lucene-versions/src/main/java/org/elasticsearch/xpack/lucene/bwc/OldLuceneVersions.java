@@ -27,6 +27,7 @@ import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.index.IndexModule;
 import org.elasticsearch.index.IndexSettings;
 import org.elasticsearch.index.IndexVersion;
+import org.elasticsearch.index.IndexVersions;
 import org.elasticsearch.index.engine.Engine;
 import org.elasticsearch.index.engine.EngineFactory;
 import org.elasticsearch.index.engine.ReadOnlyEngine;
@@ -111,12 +112,17 @@ public class OldLuceneVersions extends Plugin implements IndexStorePlugin, Clust
     @Override
     public void onIndexModule(IndexModule indexModule) {
         if (indexModule.indexSettings().getIndexVersionCreated().isLegacyIndexVersion()) {
-            indexModule.addIndexEventListener(new IndexEventListener() {
-                @Override
-                public void afterFilesRestoredFromRepository(IndexShard indexShard) {
-                    convertToNewFormat(indexShard);
-                }
-            });
+            if (indexModule.indexSettings()
+                .getIndexVersionCreated()
+                .before(IndexVersion.getMinimumCompatibleIndexVersion(IndexVersions.MINIMUM_COMPATIBLE.id()))) {
+
+                indexModule.addIndexEventListener(new IndexEventListener() {
+                    @Override
+                    public void afterFilesRestoredFromRepository(IndexShard indexShard) {
+                        convertToNewFormat(indexShard);
+                    }
+                });
+            }
 
             indexModule.addIndexEventListener(failShardsListener.get());
 

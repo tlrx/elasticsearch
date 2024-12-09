@@ -206,6 +206,9 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
     public SegmentInfos readLastCommittedSegmentsInfo() throws IOException {
         failIfCorrupted();
         try {
+            if (indexSettings.getIndexVersionCreated().isLegacyIndexVersion()) {
+                return SegmentInfos.readLatestCommit(directory, indexSettings.getIndexVersionCreated().luceneVersion().major);
+            }
             return readSegmentsInfo(null, directory());
         } catch (CorruptIndexException | IndexFormatTooOldException | IndexFormatTooNewException ex) {
             markStoreCorrupted(ex);
@@ -296,6 +299,23 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
         lock.lock();
         try (Closeable ignored = lockDirectory ? directory.obtainLock(IndexWriter.WRITE_LOCK_NAME) : () -> {}) {
             return MetadataSnapshot.loadFromIndexCommit(commit, directory, logger);
+        } catch (CorruptIndexException | IndexFormatTooOldException | IndexFormatTooNewException ex) {
+            markStoreCorrupted(ex);
+            throw ex;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public MetadataSnapshot getMetadata(SegmentInfos segmentInfos) throws IOException {
+        ensureOpen();
+        failIfCorrupted();
+        // if we lock the directory we also acquire the write lock since that makes sure that nobody else tries to lock the IW
+        // on this store at the same time.
+        java.util.concurrent.locks.Lock lock = metadataLock.readLock();
+        lock.lock();
+        try {
+            return MetadataSnapshot.loadFromSegmentInfos(segmentInfos, directory, logger);
         } catch (CorruptIndexException | IndexFormatTooOldException | IndexFormatTooNewException ex) {
             markStoreCorrupted(ex);
             throw ex;
@@ -698,7 +718,7 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
             directory.syncMetaData();
             Store.MetadataSnapshot metadataOrEmpty;
             try {
-                metadataOrEmpty = getMetadata(null);
+                metadataOrEmpty = getMetadata(null, false);
             } catch (IndexNotFoundException e) {
                 metadataOrEmpty = MetadataSnapshot.EMPTY;
             }
@@ -820,11 +840,14 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
         public static final MetadataSnapshot EMPTY = new MetadataSnapshot(emptyMap(), emptyMap(), 0L);
 
         static MetadataSnapshot loadFromIndexCommit(IndexCommit commit, Directory directory, Logger logger) throws IOException {
+            return loadFromSegmentInfos(Store.readSegmentsInfo(commit, directory), directory, logger);
+        }
+
+        static MetadataSnapshot loadFromSegmentInfos(SegmentInfos segmentCommitInfos, Directory directory, Logger logger) throws IOException {
             final long numDocs;
             final Map<String, StoreFileMetadata> metadataByFile = new HashMap<>();
             final Map<String, String> commitUserData;
             try {
-                final SegmentInfos segmentCommitInfos = Store.readSegmentsInfo(commit, directory);
                 numDocs = Lucene.getNumDocs(segmentCommitInfos);
                 commitUserData = Map.copyOf(segmentCommitInfos.getUserData());
                 // we don't know which version was used to write so we take the max version.
@@ -877,8 +900,8 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
                     // TODO we should check the checksum in lucene if we hit an exception
                     logger.warn(
                         () -> format(
-                            "failed to build store metadata. checking segment info integrity (with commit [%s])",
-                            commit == null ? "no" : "yes"
+                            "failed to build store metadata. checking segment info integrity (with infos [%s])",
+                            segmentCommitInfos == null ? "no" : "yes"
                         ),
                         ex
                     );

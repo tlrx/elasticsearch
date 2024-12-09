@@ -117,7 +117,14 @@ public class ReadOnlyEngine extends Engine {
                 // we obtain the IW lock even though we never modify the index.
                 // yet this makes sure nobody else does. including some testing tools that try to be messy
                 indexWriterLock = obtainLock ? directory.obtainLock(IndexWriter.WRITE_LOCK_NAME) : null;
-                this.lastCommittedSegmentInfos = Lucene.readSegmentInfos(directory);
+                if (getEngineConfig().getStore().indexSettings().getIndexVersionCreated().isLegacyIndexVersion()) {
+                    this.lastCommittedSegmentInfos = SegmentInfos.readLatestCommit(
+                        directory,
+                        getEngineConfig().getStore().indexSettings().getIndexVersionCreated().luceneVersion().major
+                    );
+                } else {
+                    this.lastCommittedSegmentInfos = Lucene.readSegmentInfos(directory);
+                }
                 this.commitId = generateSearcherId(lastCommittedSegmentInfos);
                 if (seqNoStats == null) {
                     seqNoStats = buildSeqNoStats(config, lastCommittedSegmentInfos);
@@ -218,11 +225,13 @@ public class ReadOnlyEngine extends Engine {
 
     protected DirectoryReader open(IndexCommit commit) throws IOException {
         assert Transports.assertNotTransportThread("opening index commit of a read-only engine");
-        DirectoryReader directoryReader = DirectoryReader.open(
-            commit,
-            org.apache.lucene.util.Version.MIN_SUPPORTED_MAJOR,
-            engineConfig.getLeafSorter()
-        );
+        int minVersion;
+        if (engineConfig.getStore().indexSettings().getIndexVersionCreated().isLegacyIndexVersion()) {
+            minVersion = getEngineConfig().getStore().indexSettings().getIndexVersionCreated().luceneVersion().major;
+        } else {
+            minVersion = org.apache.lucene.util.Version.MIN_SUPPORTED_MAJOR;
+        }
+        DirectoryReader directoryReader = DirectoryReader.open(commit, minVersion, engineConfig.getLeafSorter());
         if (lazilyLoadSoftDeletes) {
             return new LazySoftDeletesDirectoryReaderWrapper(directoryReader, Lucene.SOFT_DELETES_FIELD);
         } else {
