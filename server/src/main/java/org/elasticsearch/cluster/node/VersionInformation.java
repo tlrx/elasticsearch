@@ -18,20 +18,23 @@ import java.util.Objects;
 
 /**
  * Represents the versions of various aspects of an Elasticsearch node.
- * @param buildVersion      The node {@link BuildVersion}
- * @param minIndexVersion   The minimum {@link IndexVersion} supported by this node
- * @param maxIndexVersion   The maximum {@link IndexVersion} supported by this node
+ * @param buildVersion              The node {@link BuildVersion}
+ * @param minIndexVersion           The minimum {@link IndexVersion} supported by this node
+ * @param minReadOnlyIndexVersion   The minimum {@link IndexVersion} for read-only indices supported by this node
+ * @param maxIndexVersion           The maximum {@link IndexVersion} supported by this node
  */
 public record VersionInformation(
     BuildVersion buildVersion,
     Version nodeVersion,
     IndexVersion minIndexVersion,
+    IndexVersion minReadOnlyIndexVersion,
     IndexVersion maxIndexVersion
 ) {
 
     public static final VersionInformation CURRENT = new VersionInformation(
         BuildVersion.current(),
         IndexVersions.MINIMUM_COMPATIBLE,
+        IndexVersions.MINIMUM_READONLY_COMPATIBLE,
         IndexVersion.current()
     );
 
@@ -39,11 +42,18 @@ public record VersionInformation(
         Objects.requireNonNull(buildVersion);
         Objects.requireNonNull(nodeVersion);
         Objects.requireNonNull(minIndexVersion);
+        Objects.requireNonNull(minReadOnlyIndexVersion);
         Objects.requireNonNull(maxIndexVersion);
+        assert minReadOnlyIndexVersion.onOrBefore(minIndexVersion) : minReadOnlyIndexVersion + " > " + minIndexVersion;
     }
 
-    public VersionInformation(BuildVersion version, IndexVersion minIndexVersion, IndexVersion maxIndexVersion) {
-        this(version, Version.CURRENT, minIndexVersion, maxIndexVersion);
+    public VersionInformation(
+        BuildVersion version,
+        IndexVersion minIndexVersion,
+        IndexVersion minReadOnlyIndexVersion,
+        IndexVersion maxIndexVersion
+    ) {
+        this(version, Version.CURRENT, minIndexVersion, minReadOnlyIndexVersion, maxIndexVersion);
         /*
          * Whilst DiscoveryNode.getVersion exists, we need to be able to get a Version from VersionInfo
          * This needs to be consistent - on serverless, BuildVersion has an id of -1, which translates
@@ -56,8 +66,13 @@ public record VersionInformation(
     }
 
     @Deprecated
-    public VersionInformation(Version version, IndexVersion minIndexVersion, IndexVersion maxIndexVersion) {
-        this(BuildVersion.fromVersionId(version.id()), version, minIndexVersion, maxIndexVersion);
+    public VersionInformation(
+        Version version,
+        IndexVersion minIndexVersion,
+        IndexVersion minReadOnlyIndexVersion,
+        IndexVersion maxIndexVersion
+    ) {
+        this(BuildVersion.fromVersionId(version.id()), version, minIndexVersion, minReadOnlyIndexVersion, maxIndexVersion);
     }
 
     @Deprecated
@@ -67,11 +82,8 @@ public record VersionInformation(
         } else if (nodeVersion.equals(Version.CURRENT)) {
             return CURRENT;
         } else if (nodeVersion.before(Version.V_8_11_0)) {
-            return new VersionInformation(
-                nodeVersion,
-                IndexVersion.getMinimumCompatibleIndexVersion(nodeVersion.id),
-                IndexVersion.fromId(nodeVersion.id)
-            );
+            var minIndexVersion = IndexVersion.getMinimumCompatibleIndexVersion(nodeVersion.id);
+            return new VersionInformation(nodeVersion, minIndexVersion, minIndexVersion, IndexVersion.fromId(nodeVersion.id));
         } else {
             throw new IllegalArgumentException("Node versions can only be inferred before release version 8.10.0");
         }

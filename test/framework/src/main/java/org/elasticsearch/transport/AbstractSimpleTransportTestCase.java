@@ -129,6 +129,7 @@ public abstract class AbstractSimpleTransportTestCase extends ESTestCase {
     protected static final VersionInformation version0 = new VersionInformation(
         Version.fromString(String.valueOf(Version.CURRENT.major) + ".0.0"),
         IndexVersions.MINIMUM_COMPATIBLE,
+        IndexVersions.MINIMUM_READONLY_COMPATIBLE,
         IndexVersion.current()
     );
     protected static final TransportVersion transportVersion0 = TransportVersion.current();
@@ -140,6 +141,7 @@ public abstract class AbstractSimpleTransportTestCase extends ESTestCase {
     protected static final VersionInformation version1 = new VersionInformation(
         Version.fromId(version0.nodeVersion().id + 1),
         IndexVersions.MINIMUM_COMPATIBLE,
+        IndexVersions.MINIMUM_READONLY_COMPATIBLE,
         IndexVersion.current()
     );
     protected static final TransportVersion transportVersion1 = TransportVersion.fromId(transportVersion0.id() + 1);
@@ -2319,6 +2321,7 @@ public abstract class AbstractSimpleTransportTestCase extends ESTestCase {
                 new VersionInformation(
                     Version.CURRENT.minimumCompatibilityVersion(),
                     IndexVersions.MINIMUM_COMPATIBLE,
+                    IndexVersions.MINIMUM_READONLY_COMPATIBLE,
                     IndexVersion.current()
                 ),
                 transportVersion,
@@ -2358,6 +2361,7 @@ public abstract class AbstractSimpleTransportTestCase extends ESTestCase {
                 new VersionInformation(
                     Version.CURRENT.minimumCompatibilityVersion(),
                     IndexVersions.MINIMUM_COMPATIBLE,
+                    IndexVersions.MINIMUM_READONLY_COMPATIBLE,
                     IndexVersion.current()
                 ),
                 transportVersion,

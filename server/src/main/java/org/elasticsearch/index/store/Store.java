@@ -207,7 +207,20 @@ public class Store extends AbstractIndexShardComponent implements Closeable, Ref
         failIfCorrupted();
         try {
             return readSegmentsInfo(null, directory());
-        } catch (CorruptIndexException | IndexFormatTooOldException | IndexFormatTooNewException ex) {
+        } catch (IndexFormatTooOldException e) {
+            // Temporary workaround
+            var indexVersion = indexSettings.getIndexMetadata().getCompatibilityVersion();
+            if (indexVersion.onOrAfter(IndexVersions.MINIMUM_READONLY_COMPATIBLE)) {
+                assert indexVersion.before(IndexVersions.MINIMUM_COMPATIBLE) : indexVersion;
+                try {
+                    return SegmentInfos.readLatestCommit(directory, indexVersion.luceneVersion().major);
+                } catch (CorruptIndexException | IndexFormatTooOldException | IndexFormatTooNewException ee) {
+                    e.addSuppressed(ee);
+                }
+            }
+            markStoreCorrupted(e);
+            throw e;
+        } catch (CorruptIndexException | IndexFormatTooNewException ex) {
             markStoreCorrupted(ex);
             throw ex;
         }

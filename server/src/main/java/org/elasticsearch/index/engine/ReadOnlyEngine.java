@@ -117,7 +117,7 @@ public class ReadOnlyEngine extends Engine {
                 // we obtain the IW lock even though we never modify the index.
                 // yet this makes sure nobody else does. including some testing tools that try to be messy
                 indexWriterLock = obtainLock ? directory.obtainLock(IndexWriter.WRITE_LOCK_NAME) : null;
-                this.lastCommittedSegmentInfos = Lucene.readSegmentInfos(directory);
+                this.lastCommittedSegmentInfos = store.readLastCommittedSegmentsInfo();
                 this.commitId = generateSearcherId(lastCommittedSegmentInfos);
                 if (seqNoStats == null) {
                     seqNoStats = buildSeqNoStats(config, lastCommittedSegmentInfos);
@@ -220,7 +220,7 @@ public class ReadOnlyEngine extends Engine {
         assert Transports.assertNotTransportThread("opening index commit of a read-only engine");
         DirectoryReader directoryReader = DirectoryReader.open(
             commit,
-            org.apache.lucene.util.Version.MIN_SUPPORTED_MAJOR,
+            config().getIndexSettings().getIndexMetadata().getCompatibilityVersion().luceneVersion().major,
             engineConfig.getLeafSorter()
         );
         if (lazilyLoadSoftDeletes) {
@@ -575,7 +575,9 @@ public class ReadOnlyEngine extends Engine {
 
     protected DirectoryReader openDirectory(Directory directory) throws IOException {
         assert Transports.assertNotTransportThread("opening directory reader of a read-only engine");
-        final DirectoryReader reader = DirectoryReader.open(directory);
+        var minVersion = engineConfig.getIndexSettings().getIndexMetadata().getCompatibilityVersion().luceneVersion().major;
+        var commit = Lucene.getIndexCommit(SegmentInfos.readLatestCommit(directory, minVersion), directory);
+        final DirectoryReader reader = DirectoryReader.open(commit, minVersion, null);
         if (lazilyLoadSoftDeletes) {
             return new LazySoftDeletesDirectoryReaderWrapper(reader, Lucene.SOFT_DELETES_FIELD);
         } else {

@@ -173,7 +173,7 @@ public class DiscoveryNodeUtils {
             if (minIndexVersion == null || maxIndexVersion == null) {
                 versionInfo = VersionInformation.inferVersions(version);
             } else {
-                versionInfo = new VersionInformation(buildVersion, version, minIndexVersion, maxIndexVersion);
+                versionInfo = new VersionInformation(buildVersion, version, minIndexVersion, minIndexVersion, maxIndexVersion); // TODO
             }
 
             return new DiscoveryNode(name, id, ephemeralId, hostName, hostAddress, address, attributes, roles, versionInfo, externalId);

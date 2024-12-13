@@ -83,7 +83,7 @@ public class LuceneCompatibilityIT extends AbstractLuceneIndexCompatibilityTestC
         if (VERSION_MINUS_1.equals(clusterVersion())) {
             ensureGreen(index);
 
-            assertThat(indexLuceneVersion(index), equalTo(VERSION_MINUS_2));
+            assertThat(indexVersion(index), equalTo(VERSION_MINUS_2));
             assertDocCount(client(), index, numDocs);
 
             logger.debug("--> deleting index [{}]", index);
