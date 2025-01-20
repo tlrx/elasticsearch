@@ -10,6 +10,7 @@ package org.elasticsearch.xpack.searchablesnapshots.cache.full;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.lucene.analysis.core.KeywordAnalyzer;
+import org.apache.lucene.codecs.CodecUtil;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.StoredField;
@@ -22,6 +23,7 @@ import org.apache.lucene.index.IndexWriterConfig;
 import org.apache.lucene.index.KeepOnlyLastCommitDeletionPolicy;
 import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.index.SegmentInfos;
 import org.apache.lucene.index.SerialMergeScheduler;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.search.BooleanClause;
@@ -35,6 +37,8 @@ import org.apache.lucene.search.Weight;
 import org.apache.lucene.store.AlreadyClosedException;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSDirectory;
+import org.apache.lucene.store.IOContext;
+import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.ExceptionsHelper;
@@ -70,6 +74,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeSet;
@@ -434,8 +439,55 @@ public class PersistentCache implements Closeable {
             } catch (IndexNotFoundException e) {
                 logger.debug("persistent cache index does not exist yet", e);
             }
+        } catch (Exception e) {
+            if (e instanceof IllegalArgumentException iae) {
+                var message = iae.getMessage();
+                if (message != null && message.startsWith("indexCreatedVersionMajor is in the future:")) {
+                    logger.warn("cleaning Lucene index", e);
+                    IOUtils.rm(directoryPath);
+                    return Map.of();
+                }
+            }
+            throw e;
         }
         return documents;
+    }
+
+    /**
+     * Returns the string representation for Lucene codec version when the index was written.
+     *
+     * @param dir - index directory
+     * @throws IOException - if there is a low level IO error.
+     */
+    public static String getIndexFormat(Directory dir) throws IOException {
+        Objects.requireNonNull(dir);
+        return new SegmentInfos.FindSegmentsFile<String>(dir) {
+            @Override
+            protected String doBody(String segmentFileName) throws IOException {
+                String format = "unknown";
+                try (IndexInput in = dir.openInput(segmentFileName, IOContext.READONCE)) {
+                    if (CodecUtil.CODEC_MAGIC == CodecUtil.readBEInt(in)) {
+                        int actualVersion =
+                            CodecUtil.checkHeaderNoMagic(
+                                in, "segments", SegmentInfos.VERSION_70, Integer.MAX_VALUE);
+                        if (actualVersion == SegmentInfos.VERSION_70) {
+                            format = "Lucene 7.0 or later";
+                        } else if (actualVersion == SegmentInfos.VERSION_72) {
+                            format = "Lucene 7.2 or later";
+                        } else if (actualVersion == SegmentInfos.VERSION_74) {
+                            format = "Lucene 7.4 or later";
+                        } else if (actualVersion == SegmentInfos.VERSION_86) {
+                            format = "Lucene 8.6 or later";
+                        } else if (actualVersion > SegmentInfos.VERSION_86) {
+                            format = "Lucene 8.6 or later (UNSUPPORTED)";
+                        }
+                    } else {
+                        format = "Lucene 6.x or prior (UNSUPPORTED)";
+                    }
+                }
+                return format;
+            }
+        }.run();
     }
 
     /**
