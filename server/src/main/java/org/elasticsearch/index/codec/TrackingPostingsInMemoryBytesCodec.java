@@ -46,18 +46,19 @@ public class TrackingPostingsInMemoryBytesCodec extends FilterCodec {
     public PostingsFormat postingsFormat() {
         PostingsFormat format = super.postingsFormat();
 
-        return new PostingsFormat(format.getName()) {
-            @Override
-            public FieldsConsumer fieldsConsumer(SegmentWriteState state) throws IOException {
-                FieldsConsumer consumer = format.fieldsConsumer(state);
-                return new TrackingLengthFieldsConsumer(state, consumer);
-            }
-
-            @Override
-            public FieldsProducer fieldsProducer(SegmentReadState state) throws IOException {
-                return format.fieldsProducer(state);
-            }
-        };
+        return format;
+//        return new PostingsFormat(format.getName()) {
+//            @Override
+//            public FieldsConsumer fieldsConsumer(SegmentWriteState state) throws IOException {
+//                FieldsConsumer consumer = format.fieldsConsumer(state);
+//                return new TrackingLengthFieldsConsumer(state, consumer);
+//            }
+//
+//            @Override
+//            public FieldsProducer fieldsProducer(SegmentReadState state) throws IOException {
+//                return format.fieldsProducer(state);
+//            }
+//        };
     }
 
     static final class TrackingLengthFieldsConsumer extends FieldsConsumer {

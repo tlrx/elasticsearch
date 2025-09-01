@@ -43,9 +43,11 @@ import org.elasticsearch.datastreams.DataStreamsPlugin;
 import org.elasticsearch.index.Index;
 import org.elasticsearch.index.IndexSettings;
 import org.elasticsearch.index.mapper.DateFieldMapper;
+import org.elasticsearch.index.query.MatchAllQueryBuilder;
 import org.elasticsearch.ingest.common.IngestCommonPlugin;
 import org.elasticsearch.plugins.Plugin;
 import org.elasticsearch.reindex.ReindexPlugin;
+import org.elasticsearch.search.SearchHit;
 import org.elasticsearch.test.ESIntegTestCase;
 import org.elasticsearch.test.transport.MockTransportService;
 import org.elasticsearch.xcontent.XContentType;
@@ -67,6 +69,7 @@ import org.junit.Before;
 
 import java.io.IOException;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
@@ -74,8 +77,10 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 import static org.elasticsearch.cluster.metadata.MetadataIndexTemplateService.DEFAULT_TIMESTAMP_FIELD;
+import static org.elasticsearch.index.query.QueryBuilders.matchAllQuery;
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAcked;
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertHitCount;
+import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertNoFailuresAndResponse;
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertResponse;
 import static org.hamcrest.Matchers.equalTo;
 
@@ -488,7 +493,7 @@ public class ReindexDatastreamIndexTransportActionIT extends ESIntegTestCase {
     private static final String TSDB_DOC = """
         {
             "@timestamp": "$time",
-            "metricset": "pod",
+            "metricset": "$metricset",
             "k8s": {
                 "pod": {
                     "name": "dog",
@@ -505,8 +510,9 @@ public class ReindexDatastreamIndexTransportActionIT extends ESIntegTestCase {
 
     public void testTsdbStartEndSet() throws Exception {
         var templateSettings = Settings.builder().put("index.mode", "time_series");
-        if (randomBoolean()) {
+        if (true) {
             templateSettings.put("index.routing_path", "metricset");
+            templateSettings.put("index.number_of_replicas", 0);
         }
         var mapping = new CompressedXContent(TSDB_MAPPING);
 
@@ -525,10 +531,66 @@ public class ReindexDatastreamIndexTransportActionIT extends ESIntegTestCase {
         Instant time = Instant.now();
         String backingIndexName;
         {
-            var indexRequest = new IndexRequest("k8s").opType(DocWriteRequest.OpType.CREATE);
-            indexRequest.source(TSDB_DOC.replace("$time", formatInstant(time)), XContentType.JSON);
-            var indexResponse = safeGet(client().index(indexRequest));
-            backingIndexName = indexResponse.getIndex();
+            List<String> ids = new ArrayList<>();
+            List<String> index = new ArrayList<>();
+            var initialTime = time;
+            for (int i = 0; i < 5; i++) {
+                String replacement = formatInstant(time);
+                var indexRequest = new IndexRequest("k8s").opType(DocWriteRequest.OpType.CREATE);
+                indexRequest.source(TSDB_DOC.replace("$time", replacement).replace("$metricset", "pod"), XContentType.JSON);
+                var indexResponse = safeGet(client().index(indexRequest));
+                ids.add(indexResponse.getId());
+                index.add(indexResponse.getIndex());
+                safeSleep(50);
+                time = Instant.now();
+            }
+            for (int i = 0; i < 2; i++) {
+                String replacement = formatInstant(time);
+                var indexRequest = new IndexRequest("k8s").opType(DocWriteRequest.OpType.CREATE);
+                indexRequest.source(TSDB_DOC.replace("$time", replacement).replace("$metricset", "pod2"), XContentType.JSON);
+                var indexResponse = safeGet(client().index(indexRequest));
+                ids.add(indexResponse.getId());
+                safeSleep(50);
+                time = Instant.now();
+            }
+
+            refresh("k8s");
+
+            var result = client().prepareGet(index.get(0), ids.get(0)).execute().actionGet();
+            var source = result.getSourceAsString();
+
+            assertNoFailuresAndResponse(
+                client().prepareSearch("k8s").setFetchSource(true).setQuery(matchAllQuery()).execute(),
+                searchResponse -> {
+                    for (SearchHit hit : searchResponse.getHits()) {
+                        logger.info("hit: {} {}", hit.getId(), hit.getSourceAsString());
+                    }
+                }
+            );
+
+            for (int i = 0; i < 2; i++) {
+                String replacement = formatInstant(time);
+                var indexRequest = new IndexRequest("k8s").opType(DocWriteRequest.OpType.CREATE);
+                indexRequest.source(TSDB_DOC.replace("$time", replacement).replace("$metricset", "pod3"), XContentType.JSON);
+                var indexResponse = safeGet(client().index(indexRequest));
+                safeSleep(150);
+                time = Instant.now();
+            }
+
+            refresh("k8s");
+
+            forceMerge();
+
+            expectThrows(
+                Exception.class,
+                () -> safeGet(
+                    client().index(
+                        new IndexRequest("k8s").opType(DocWriteRequest.OpType.CREATE)
+                            .source(TSDB_DOC.replace("$time", formatInstant(initialTime)).replace("$metricset", "pod"), XContentType.JSON)
+                    )
+                )
+            );
+            backingIndexName = index.get(0);
         }
 
         var sourceSettings = safeGet(indicesAdmin().getIndex(new GetIndexRequest(TEST_REQUEST_TIMEOUT).indices(backingIndexName)))

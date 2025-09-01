@@ -166,7 +166,7 @@ public class TimeSeriesIdFieldMapper extends MetadataFieldMapper {
         if (this.useDocValuesSkipper) {
             context.doc().add(SortedDocValuesField.indexedField(fieldType().name(), timeSeriesId));
         } else {
-            context.doc().add(new SortedDocValuesField(fieldType().name(), timeSeriesId));
+            context.doc().addWithKey(fieldType().name(), new SortedDocValuesField(fieldType().name(), timeSeriesId));
         }
 
         BytesRef uidEncoded = TsidExtractingIdFieldMapper.createField(

@@ -97,18 +97,17 @@ public class TsidExtractingIdFieldMapper extends IdFieldMapper {
         context.id(id);
 
         BytesRef uidEncoded = Uid.encodeId(context.id());
-        context.doc().add(new StringField(NAME, uidEncoded, Field.Store.YES));
+        context.doc().add(new StringField(NAME, uidEncoded, Field.Store.NO));
         return uidEncoded;
     }
 
     public static String createId(int routingHash, BytesRef tsid, long timestamp) {
-        Hash128 hash = new Hash128();
-        MurmurHash3.hash128(tsid.bytes, tsid.offset, tsid.length, SEED, hash);
-
-        byte[] bytes = new byte[20];
-        ByteUtils.writeIntLE(routingHash, bytes, 0);
-        ByteUtils.writeLongLE(hash.h1, bytes, 4);
-        ByteUtils.writeLongBE(timestamp, bytes, 12);   // Big Ending shrinks the inverted index by ~37%
+        // We just concatenate the tsid + timestamp to create the _id so we can extract the tsid and timestamp
+        // for lookups. Since we're just storing the tsid and timestamp it's fine if it's a bit longer
+        byte[] bytes = new byte[tsid.length + Long.BYTES];
+        //        ByteUtils.writeIntLE(routingHash, bytes, 0);
+        ByteUtils.writeLongBE(timestamp, bytes, 0);   // Big Ending shrinks the inverted index by ~37%
+        System.arraycopy(tsid.bytes, 0, bytes, Long.BYTES, tsid.length);
 
         return Strings.BASE_64_NO_PADDING_URL_ENCODER.encodeToString(bytes);
     }

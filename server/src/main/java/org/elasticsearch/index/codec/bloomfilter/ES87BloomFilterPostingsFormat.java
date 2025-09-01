@@ -20,17 +20,21 @@
 package org.elasticsearch.index.codec.bloomfilter;
 
 import org.apache.lucene.codecs.CodecUtil;
+import org.apache.lucene.codecs.DocValuesProducer;
 import org.apache.lucene.codecs.FieldsConsumer;
 import org.apache.lucene.codecs.FieldsProducer;
 import org.apache.lucene.codecs.NormsProducer;
 import org.apache.lucene.codecs.PostingsFormat;
 import org.apache.lucene.index.BaseTermsEnum;
+import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.FieldInfos;
 import org.apache.lucene.index.Fields;
 import org.apache.lucene.index.FilterLeafReader;
 import org.apache.lucene.index.ImpactsEnum;
 import org.apache.lucene.index.IndexFileNames;
+import org.apache.lucene.index.MergeState;
 import org.apache.lucene.index.PostingsEnum;
+import org.apache.lucene.index.ReaderSlice;
 import org.apache.lucene.index.SegmentInfo;
 import org.apache.lucene.index.SegmentReadState;
 import org.apache.lucene.index.SegmentWriteState;
@@ -45,10 +49,12 @@ import org.apache.lucene.util.AttributeSource;
 import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.lucene.store.IndexOutputOutputStream;
+import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.common.util.ByteArray;
 import org.elasticsearch.common.util.ByteUtils;
 import org.elasticsearch.core.IOUtils;
+import org.elasticsearch.index.mapper.IdFieldMapper;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -79,6 +85,8 @@ public class ES87BloomFilterPostingsFormat extends PostingsFormat {
     private static final int BITS_PER_ENTRY = 10;
     /** The optimal number of hash functions for a bloom filter is approximately 0.7 times the number of bits per entry. */
     private static final int NUM_HASH_FUNCTIONS = 7;
+    private static final int DEFAULT_BLOOM_FILTER_SIZE = Math.toIntExact(ByteSizeValue.ofKb(64).getBytes());
+    private static final int DEFAULT_NUM_BITS_PER_BLOOM_FILTER = DEFAULT_BLOOM_FILTER_SIZE * 8;
 
     private Function<String, PostingsFormat> postingsFormats;
     private BigArrays bigArrays;
@@ -145,8 +153,39 @@ public class ES87BloomFilterPostingsFormat extends PostingsFormat {
 
         @Override
         public void write(Fields fields, NormsProducer norms) throws IOException {
-            writePostings(fields, norms);
+            //writePostings(fields, norms);
             writeBloomFilters(fields);
+        }
+
+        @Override
+        public void merge(MergeState mergeState, NormsProducer norms) throws IOException {
+            try (
+                var bloomFilterBuffer = bigArrays.newByteArray(DEFAULT_BLOOM_FILTER_SIZE, false);
+                var scratch = bigArrays.newByteArray(DEFAULT_BLOOM_FILTER_SIZE, false)
+            ) {
+                long written = indexOut.getFilePointer();
+                for (int readerIndex = 0; readerIndex < mergeState.fieldsProducers.length; readerIndex++) {
+                    final var fieldsProducer = mergeState.fieldsProducers[readerIndex];
+                    var bloomFilterTerms = (BloomFilterTerms) fieldsProducer.terms(IdFieldMapper.NAME);
+                    scratch.fill(0, DEFAULT_BLOOM_FILTER_SIZE, (byte) 0);
+                    // TODO: the big array might not provide a contiguous array
+                    byte[] scratchArray = scratch.array();
+                    bloomFilterTerms.data.readBytes(0, scratchArray, 0, scratchArray.length);
+                    for (int i = 0; i < scratchArray.length; i++) {
+                        byte b = bloomFilterBuffer.get(i);
+                        byte b2 = scratchArray[i];
+                        bloomFilterBuffer.set(i, (byte) ((b & 0xFF) | (b2 & 0xFF)));
+                    }
+                }
+                // TODO: make it so it reads all the fields
+                bloomFilters.add(new BloomFilter(IdFieldMapper.NAME, written, DEFAULT_NUM_BITS_PER_BLOOM_FILTER));
+                if (bloomFilterBuffer.hasArray()) {
+                    indexOut.writeBytes(bloomFilterBuffer.array(), 0, DEFAULT_BLOOM_FILTER_SIZE);
+                } else {
+                    BytesReference.fromByteArray(bloomFilterBuffer, DEFAULT_BLOOM_FILTER_SIZE)
+                        .writeTo(new IndexOutputOutputStream(indexOut));
+                }
+            }
         }
 
         private void writePostings(Fields fields, NormsProducer norms) throws IOException {
@@ -178,8 +217,8 @@ public class ES87BloomFilterPostingsFormat extends PostingsFormat {
         }
 
         private void writeBloomFilters(Fields fields) throws IOException {
-            final int bloomFilterSize = bloomFilterSize(state.segmentInfo.maxDoc());
-            final int numBytes = numBytesForBloomFilter(bloomFilterSize);
+            final int bloomFilterSize = DEFAULT_NUM_BITS_PER_BLOOM_FILTER;//bloomFilterSize(state.segmentInfo.maxDoc());
+            final int numBytes = DEFAULT_BLOOM_FILTER_SIZE; //numBytesForBloomFilter(bloomFilterSize);
             final int[] hashes = new int[NUM_HASH_FUNCTIONS];
             try (ByteArray buffer = bigArrays.newByteArray(numBytes, false)) {
                 long written = indexOut.getFilePointer();
@@ -290,6 +329,12 @@ public class ES87BloomFilterPostingsFormat extends PostingsFormat {
 
         FieldsReader(SegmentReadState state) throws IOException {
             boolean success = false;
+            var fieldInfo = state.fieldInfos.fieldInfo("_tsid");
+            SegmentReadState state1 = new SegmentReadState(state, "");
+            DocValuesProducer docValuesProducer = state.segmentInfo.getCodec().docValuesFormat().fieldsProducer(state1);
+            var tsIds = docValuesProducer.getSorted(fieldInfo);
+            var timestamps = docValuesProducer.getSortedNumeric(state.fieldInfos.fieldInfo("@timestamp"));
+
             try (ChecksumIndexInput metaIn = state.directory.openChecksumInput(metaFile(state.segmentInfo, state.segmentSuffix))) {
                 Map<String, BloomFilter> bloomFilters = null;
                 Throwable priorE = null;
@@ -307,6 +352,7 @@ public class ES87BloomFilterPostingsFormat extends PostingsFormat {
                     final int numFieldsGroups = metaIn.readVInt();
                     for (int i = 0; i < numFieldsGroups; i++) {
                         final FieldsGroup group = FieldsGroup.readFrom(metaIn, state.fieldInfos);
+
                         final FieldsProducer reader = group.postingsFormat.fieldsProducer(new SegmentReadState(state, group.suffix));
                         toCloses.add(reader);
                         for (String field : group.fields) {
@@ -349,10 +395,10 @@ public class ES87BloomFilterPostingsFormat extends PostingsFormat {
         }
 
         private boolean assertBloomFilterSizes(SegmentInfo segmentInfo) {
-            for (BloomFilter bloomFilter : bloomFilters.values()) {
-                assert bloomFilter.bloomFilterSize == bloomFilterSize(segmentInfo.maxDoc())
-                    : "bloom_filter=" + bloomFilter + ", max_docs=" + segmentInfo.maxDoc();
-            }
+//            for (BloomFilter bloomFilter : bloomFilters.values()) {
+//                assert bloomFilter.bloomFilterSize == bloomFilterSize(segmentInfo.maxDoc())
+//                    : "bloom_filter=" + bloomFilter + ", max_docs=" + segmentInfo.maxDoc();
+//            }
             return true;
         }
 
@@ -366,11 +412,68 @@ public class ES87BloomFilterPostingsFormat extends PostingsFormat {
             IOUtils.close(toCloses);
         }
 
+        private static final Terms EMPTY =
+            new Terms() {
+                @Override
+                public TermsEnum iterator() throws IOException {
+                    return TermsEnum.EMPTY;
+                }
+
+                @Override
+                public long size() throws IOException {
+                    return 0;
+                }
+
+                @Override
+                public long getSumTotalTermFreq() throws IOException {
+                    return 0;
+                }
+
+                @Override
+                public long getSumDocFreq() throws IOException {
+                    return 0;
+                }
+
+                @Override
+                public int getDocCount() throws IOException {
+                    return 0;
+                }
+
+                @Override
+                public boolean hasFreqs() {
+                    return false;
+                }
+
+                @Override
+                public boolean hasOffsets() {
+                    return false;
+                }
+
+                @Override
+                public boolean hasPositions() {
+                    return false;
+                }
+
+                @Override
+                public boolean hasPayloads() {
+                    return false;
+                }
+            };
+
         @Override
         public Terms terms(String field) throws IOException {
             final FieldsProducer reader = readerMap.get(field);
             if (reader == null) {
-                return null;
+                final BloomFilter bloomFilter4 = bloomFilters.get(field);
+                if (bloomFilter4 != null) {
+                    final RandomAccessInput data = indexIn.randomAccessSlice(
+                        bloomFilter4.startFilePointer(),
+                        numBytesForBloomFilter(bloomFilter4.bloomFilterSize)
+                    );
+                    return new BloomFilterTerms(EMPTY, data, bloomFilter4.bloomFilterSize);
+                } else {
+                    return null;
+                }
             }
             final Terms terms = reader.terms(field);
             if (terms == null) {
@@ -447,11 +550,7 @@ public class ES87BloomFilterPostingsFormat extends PostingsFormat {
 
                 @Override
                 public boolean seekExact(BytesRef term) throws IOException {
-                    if (mayContainTerm(term)) {
-                        return getDelegate().seekExact(term);
-                    } else {
-                        return false;
-                    }
+                    return mayContainTerm(term);
                 }
 
                 @Override

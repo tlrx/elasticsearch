@@ -190,6 +190,17 @@ public class DownsampleActionIT extends ESRestTestCase {
         createIndexWithSettings(client(), index, alias, settings, mapping);
     }
 
+    public void testHola() throws Exception {
+        // Create the ILM policy
+        String phaseName = randomFrom("warm", "cold");
+        DateHistogramInterval fixedInterval = ConfigTestHelpers.randomInterval();
+        createNewSingletonPolicy(client(), policy, phaseName, new DownsampleAction(fixedInterval, DownsampleAction.DEFAULT_WAIT_TIMEOUT));
+
+        // Create a time series index managed by the policy
+        createIndex(index, alias, policy, true);
+        index(client(), index, true, null, "@timestamp", "2020-01-01T05:10:00Z", "volume", 11.0, "metricset", randomAlphaOfLength(5));
+    }
+
     public void testRollupIndex() throws Exception {
         // Create the ILM policy
         String phaseName = randomFrom("warm", "cold");

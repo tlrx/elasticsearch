@@ -111,6 +111,7 @@ public sealed interface IdLoader permits IdLoader.TsIdLoader, IdLoader.StoredIdL
                     var routingBuilder = builders[i];
                     ids[i] = TsidExtractingIdFieldMapper.createId(false, routingBuilder, tsid, timestamp, new byte[16]);
                 } else {
+                    // TODO: remove this?
                     found = routingHashDocValues.advanceExact(docId);
                     assert found;
                     BytesRef routingHashBytes = routingHashDocValues.lookupOrd(routingHashDocValues.ordValue());

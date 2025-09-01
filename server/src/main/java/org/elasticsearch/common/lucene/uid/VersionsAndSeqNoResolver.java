@@ -145,29 +145,11 @@ public final class VersionsAndSeqNoResolver {
         return null;
     }
 
-    /**
-     * A special variant of loading docid and version in case of time series indices.
-     * <p>
-     * Makes use of the fact that timestamp is part of the id, the existence of @timestamp field and
-     * that segments are sorted by {@link org.elasticsearch.cluster.metadata.DataStream#TIMESERIES_LEAF_READERS_SORTER}.
-     * This allows this method to know whether there is no document with the specified id without loading the docid for
-     * the specified id.
-     *
-     * @param reader    The reader load docid, version and seqno from.
-     * @param uid       The term that describes the uid of the document to load docid, version and seqno for.
-     * @param id        The id that contains the encoded timestamp. The timestamp is used to skip checking the id for entire segments.
-     * @param loadSeqNo Whether to load sequence number from _seq_no doc values field.
-     * @return the internal doc ID and version for the specified term from the specified reader or
-     *         returning <code>null</code> if no document was found for the specified id
-     * @throws IOException In case of an i/o related failure
-     */
     public static DocIdAndVersion timeSeriesLoadDocIdAndVersion(IndexReader reader, BytesRef uid, String id, boolean loadSeqNo)
         throws IOException {
         byte[] idAsBytes = Base64.getUrlDecoder().decode(id);
-        assert idAsBytes.length == 20;
-        // id format: [4 bytes (basic hash routing fields), 8 bytes prefix of 128 murmurhash dimension fields, 8 bytes
-        // @timestamp)
-        long timestamp = ByteUtils.readLongBE(idAsBytes, 12);
+        // id format: [8 bytes @timestamp, _tsid]
+        long timestamp = ByteUtils.readLongBE(idAsBytes, 0);
 
         PerThreadIDVersionAndSeqNoLookup[] lookups = getLookupState(reader, true);
         List<LeafReaderContext> leaves = reader.leaves();
@@ -184,6 +166,58 @@ public final class VersionsAndSeqNoResolver {
                 return null;
             }
             DocIdAndVersion result = lookup.lookupVersion(uid, loadSeqNo, leaf);
+            if (result != null) {
+                return result;
+            }
+            prevMaxTimestamp = lookup.maxTimestamp;
+        }
+        return null;
+    }
+
+
+    /**
+     * A special variant of loading docid and version in case of time series indices.
+     * <p>
+     * Makes use of the fact that timestamp is part of the id, the existence of @timestamp field and
+     * that segments are sorted by {@link org.elasticsearch.cluster.metadata.DataStream#TIMESERIES_LEAF_READERS_SORTER}.
+     * This allows this method to know whether there is no document with the specified id without loading the docid for
+     * the specified id.
+     *
+     * @param reader    The reader load docid, version and seqno from.
+     * @param uid       The term that describes the uid of the document to load docid, version and seqno for.
+     * @param id        The id that contains the encoded timestamp. The timestamp is used to skip checking the id for entire segments.
+     * @param loadSeqNo Whether to load sequence number from _seq_no doc values field.
+     * @return the internal doc ID and version for the specified term from the specified reader or
+     *         returning <code>null</code> if no document was found for the specified id
+     * @throws IOException In case of an i/o related failure
+     */
+    public static DocIdAndVersion timeSeriesLoadDocIdAndVersion(
+        IndexReader reader,
+        BytesRef uid,
+        String id,
+        BytesRef tsId,
+        boolean loadSeqNo
+    ) throws IOException {
+        byte[] idAsBytes = Base64.getUrlDecoder().decode(id);
+        //assert idAsBytes.length == 20;
+        // id format: [8 bytes @timestamp, _tsid]
+        long timestamp = ByteUtils.readLongBE(idAsBytes, 0);
+
+        PerThreadIDVersionAndSeqNoLookup[] lookups = getLookupState(reader, true);
+        List<LeafReaderContext> leaves = reader.leaves();
+        // iterate in default order, the segments should be sorted by DataStream#TIMESERIES_LEAF_READERS_SORTER
+        long prevMaxTimestamp = Long.MAX_VALUE;
+        for (final LeafReaderContext leaf : leaves) {
+            PerThreadIDVersionAndSeqNoLookup lookup = lookups[leaf.ord];
+            assert lookup.loadedTimestampRange;
+            assert prevMaxTimestamp >= lookup.maxTimestamp;
+            if (timestamp < lookup.minTimestamp) {
+                continue;
+            }
+            if (timestamp > lookup.maxTimestamp) {
+                return null;
+            }
+            DocIdAndVersion result = lookup.lookupVersionWithTsIdAndTimestamp(uid, tsId, timestamp, loadSeqNo, leaf);
             if (result != null) {
                 return result;
             }
