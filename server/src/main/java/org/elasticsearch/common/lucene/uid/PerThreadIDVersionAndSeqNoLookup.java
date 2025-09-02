@@ -22,10 +22,8 @@ import org.apache.lucene.index.PostingsEnum;
 import org.apache.lucene.index.Terms;
 import org.apache.lucene.index.TermsEnum;
 import org.apache.lucene.search.DocIdSetIterator;
-import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.cluster.metadata.DataStream;
-import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.lucene.Lucene;
 import org.elasticsearch.common.lucene.uid.VersionsAndSeqNoResolver.DocIdAndSeqNo;
 import org.elasticsearch.common.lucene.uid.VersionsAndSeqNoResolver.DocIdAndVersion;
@@ -36,7 +34,6 @@ import org.elasticsearch.index.mapper.TimeSeriesIdFieldMapper;
 import org.elasticsearch.index.mapper.VersionFieldMapper;
 
 import java.io.IOException;
-import java.util.Base64;
 
 import static org.elasticsearch.index.seqno.SequenceNumbers.UNASSIGNED_PRIMARY_TERM;
 import static org.elasticsearch.index.seqno.SequenceNumbers.UNASSIGNED_SEQ_NO;
@@ -73,22 +70,21 @@ final class PerThreadIDVersionAndSeqNoLookup {
     PerThreadIDVersionAndSeqNoLookup(LeafReader reader, boolean trackReaderKey, boolean loadTimestampRange) throws IOException {
         final Terms terms = reader.terms(IdFieldMapper.NAME);
         if (terms == null) {
-//            // If a segment contains only no-ops, it does not have _uid but has both _soft_deletes and _tombstone fields.
-//            final NumericDocValues softDeletesDV = reader.getNumericDocValues(Lucene.SOFT_DELETES_FIELD);
-//            final NumericDocValues tombstoneDV = reader.getNumericDocValues(SeqNoFieldMapper.TOMBSTONE_NAME);
-//            // this is a special case when we pruned away all IDs in a segment since all docs are deleted.
-//            final boolean allDocsDeleted = (softDeletesDV != null && reader.numDocs() == 0);
-//            if ((softDeletesDV == null || tombstoneDV == null) && allDocsDeleted == false) {
-//                throw new IllegalArgumentException(
-//                    "reader does not have _uid terms but not a no-op segment; "
-//                        + "_soft_deletes ["
-//                        + softDeletesDV
-//                        + "], _tombstone ["
-//                        + tombstoneDV
-//                        + "]"
-//                );
-//            }
-//            termsEnum = null;
+            // If a segment contains only no-ops, it does not have _uid but has both _soft_deletes and _tombstone fields.
+            final NumericDocValues softDeletesDV = reader.getNumericDocValues(Lucene.SOFT_DELETES_FIELD);
+            final NumericDocValues tombstoneDV = reader.getNumericDocValues(SeqNoFieldMapper.TOMBSTONE_NAME);
+            // this is a special case when we pruned away all IDs in a segment since all docs are deleted.
+            final boolean allDocsDeleted = (softDeletesDV != null && reader.numDocs() == 0);
+            if ((softDeletesDV == null || tombstoneDV == null) && allDocsDeleted == false) {
+                throw new IllegalArgumentException(
+                    "reader does not have _uid terms but not a no-op segment; "
+                        + "_soft_deletes ["
+                        + softDeletesDV
+                        + "], _tombstone ["
+                        + tombstoneDV
+                        + "]"
+                );
+            }
             termsEnum = null;
         } else {
             termsEnum = terms.iterator();
@@ -215,6 +211,7 @@ final class PerThreadIDVersionAndSeqNoLookup {
      * */
     private int getDocID(BytesRef id, LeafReaderContext context) throws IOException {
         // TODO: avoid doing the parsing too often
+        // _id synthetic format = [timestamp(long), tsid]
         byte[] idAsBytes = id.bytes;
         long timestamp = ByteUtils.readLongBE(idAsBytes, 0);
         byte[] tsId = new byte[idAsBytes.length - Long.BYTES];

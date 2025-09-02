@@ -16,6 +16,7 @@ import org.apache.lucene.codecs.lucene101.Lucene101Codec;
 import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.common.util.FeatureFlag;
 import org.elasticsearch.core.Nullable;
+import org.elasticsearch.index.codec.bloomfilter.BloomFilterSettings;
 import org.elasticsearch.index.codec.zstd.Zstd814StoredFieldsFormat;
 import org.elasticsearch.index.mapper.MapperService;
 
@@ -44,11 +45,18 @@ public class CodecService implements CodecProvider {
     public static final String LUCENE_DEFAULT_CODEC = "lucene_default";
 
     public CodecService(@Nullable MapperService mapperService, BigArrays bigArrays) {
+        this(mapperService, bigArrays, BloomFilterSettings.DEFAULT_BLOOM_FILTER_SETTINGS);
+    }
+
+    public CodecService(@Nullable MapperService mapperService, BigArrays bigArrays, BloomFilterSettings bloomFilterSettings) {
         final var codecs = new HashMap<String, Codec>();
 
         Codec legacyBestSpeedCodec = new LegacyPerFieldMapperCodec(Lucene101Codec.Mode.BEST_SPEED, mapperService, bigArrays);
         if (ZSTD_STORED_FIELDS_FEATURE_FLAG) {
-            codecs.put(DEFAULT_CODEC, new PerFieldMapperCodec(Zstd814StoredFieldsFormat.Mode.BEST_SPEED, mapperService, bigArrays));
+            codecs.put(
+                DEFAULT_CODEC,
+                new PerFieldMapperCodec(Zstd814StoredFieldsFormat.Mode.BEST_SPEED, mapperService, bigArrays, bloomFilterSettings)
+            );
         } else {
             codecs.put(DEFAULT_CODEC, legacyBestSpeedCodec);
         }
@@ -56,7 +64,7 @@ public class CodecService implements CodecProvider {
 
         codecs.put(
             BEST_COMPRESSION_CODEC,
-            new PerFieldMapperCodec(Zstd814StoredFieldsFormat.Mode.BEST_COMPRESSION, mapperService, bigArrays)
+            new PerFieldMapperCodec(Zstd814StoredFieldsFormat.Mode.BEST_COMPRESSION, mapperService, bigArrays, bloomFilterSettings)
         );
         Codec legacyBestCompressionCodec = new LegacyPerFieldMapperCodec(Lucene101Codec.Mode.BEST_COMPRESSION, mapperService, bigArrays);
         codecs.put(LEGACY_BEST_COMPRESSION_CODEC, legacyBestCompressionCodec);

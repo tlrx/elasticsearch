@@ -75,7 +75,7 @@ public abstract class IdFieldMapper extends MetadataFieldMapper {
      * the {@code _id} so it can be fetched easily from the index.
      */
     public static Field standardIdField(String id) {
-        return new StringField(NAME, Uid.encodeId(id), Field.Store.YES);
+        return new StringField(NAME, Uid.encodeId(id), Field.Store.NO);
     }
 
     protected abstract static class AbstractIdFieldType extends TermBasedFieldType {

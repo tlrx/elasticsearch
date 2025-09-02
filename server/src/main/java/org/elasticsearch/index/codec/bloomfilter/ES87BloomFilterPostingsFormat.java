@@ -26,7 +26,6 @@ import org.apache.lucene.codecs.FieldsProducer;
 import org.apache.lucene.codecs.NormsProducer;
 import org.apache.lucene.codecs.PostingsFormat;
 import org.apache.lucene.index.BaseTermsEnum;
-import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.FieldInfos;
 import org.apache.lucene.index.Fields;
 import org.apache.lucene.index.FilterLeafReader;
@@ -34,10 +33,11 @@ import org.apache.lucene.index.ImpactsEnum;
 import org.apache.lucene.index.IndexFileNames;
 import org.apache.lucene.index.MergeState;
 import org.apache.lucene.index.PostingsEnum;
-import org.apache.lucene.index.ReaderSlice;
 import org.apache.lucene.index.SegmentInfo;
 import org.apache.lucene.index.SegmentReadState;
 import org.apache.lucene.index.SegmentWriteState;
+import org.apache.lucene.index.SortedDocValues;
+import org.apache.lucene.index.SortedNumericDocValues;
 import org.apache.lucene.index.TermState;
 import org.apache.lucene.index.Terms;
 import org.apache.lucene.index.TermsEnum;
@@ -47,26 +47,27 @@ import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.store.RandomAccessInput;
 import org.apache.lucene.util.AttributeSource;
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.IOBooleanSupplier;
 import org.elasticsearch.common.bytes.BytesReference;
+import org.elasticsearch.common.lucene.store.ByteArrayIndexInput;
 import org.elasticsearch.common.lucene.store.IndexOutputOutputStream;
-import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.common.util.ByteArray;
 import org.elasticsearch.common.util.ByteUtils;
 import org.elasticsearch.core.IOUtils;
+import org.elasticsearch.core.Nullable;
 import org.elasticsearch.index.mapper.IdFieldMapper;
+import org.elasticsearch.index.mapper.TimeSeriesIdFieldMapper;
 
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 import java.util.function.Function;
 
 /**
@@ -85,20 +86,31 @@ public class ES87BloomFilterPostingsFormat extends PostingsFormat {
     private static final int BITS_PER_ENTRY = 10;
     /** The optimal number of hash functions for a bloom filter is approximately 0.7 times the number of bits per entry. */
     private static final int NUM_HASH_FUNCTIONS = 7;
-    private static final int DEFAULT_BLOOM_FILTER_SIZE = Math.toIntExact(ByteSizeValue.ofKb(64).getBytes());
-    private static final int DEFAULT_NUM_BITS_PER_BLOOM_FILTER = DEFAULT_BLOOM_FILTER_SIZE * 8;
 
     private Function<String, PostingsFormat> postingsFormats;
     private BigArrays bigArrays;
+    private final BloomFilterSettings bloomFilterSettings;
 
     public ES87BloomFilterPostingsFormat(BigArrays bigArrays, Function<String, PostingsFormat> postingsFormats) {
-        this();
+        this(bigArrays, postingsFormats, BloomFilterSettings.DEFAULT_BLOOM_FILTER_SETTINGS);
+    }
+
+    public ES87BloomFilterPostingsFormat(
+        BigArrays bigArrays,
+        Function<String, PostingsFormat> postingsFormats,
+        BloomFilterSettings bloomFilterSettings
+    ) {
+        super(BLOOM_CODEC_NAME);
+        // TODO: handle backward compatibility
         this.bigArrays = Objects.requireNonNull(bigArrays);
         this.postingsFormats = Objects.requireNonNull(postingsFormats);
+        this.bloomFilterSettings = bloomFilterSettings;
     }
 
     public ES87BloomFilterPostingsFormat() {
         super(BLOOM_CODEC_NAME);
+        // TODO: handle settings for SPI loaded classes
+        this.bloomFilterSettings = BloomFilterSettings.DEFAULT_BLOOM_FILTER_SETTINGS;
     }
 
     @Override
@@ -112,7 +124,7 @@ public class ES87BloomFilterPostingsFormat extends PostingsFormat {
 
     @Override
     public FieldsProducer fieldsProducer(SegmentReadState state) throws IOException {
-        return new FieldsReader(state);
+        return new FieldsReader(state, bloomFilterSettings.loadBloomFilterInMemory());
     }
 
     @Override
@@ -132,7 +144,6 @@ public class ES87BloomFilterPostingsFormat extends PostingsFormat {
         private final SegmentWriteState state;
         private final IndexOutput indexOut;
         private final List<BloomFilter> bloomFilters = new ArrayList<>();
-        private final List<FieldsGroup> fieldsGroups = new ArrayList<>();
         private final List<Closeable> toCloses = new ArrayList<>();
         private boolean closed;
 
@@ -153,21 +164,22 @@ public class ES87BloomFilterPostingsFormat extends PostingsFormat {
 
         @Override
         public void write(Fields fields, NormsProducer norms) throws IOException {
-            //writePostings(fields, norms);
             writeBloomFilters(fields);
         }
 
         @Override
         public void merge(MergeState mergeState, NormsProducer norms) throws IOException {
+            var bloomFilterSizeInBytes = bloomFilterSettings.getBloomFilterSizeInBytes();
+            var bloomFilterNumberOfBits = bloomFilterSettings.getBloomFilterSizeInBits();
             try (
-                var bloomFilterBuffer = bigArrays.newByteArray(DEFAULT_BLOOM_FILTER_SIZE, false);
-                var scratch = bigArrays.newByteArray(DEFAULT_BLOOM_FILTER_SIZE, false)
+                var bloomFilterBuffer = bigArrays.newByteArray(bloomFilterSizeInBytes, false);
+                var scratch = bigArrays.newByteArray(bloomFilterSizeInBytes, false)
             ) {
                 long written = indexOut.getFilePointer();
                 for (int readerIndex = 0; readerIndex < mergeState.fieldsProducers.length; readerIndex++) {
                     final var fieldsProducer = mergeState.fieldsProducers[readerIndex];
                     var bloomFilterTerms = (BloomFilterTerms) fieldsProducer.terms(IdFieldMapper.NAME);
-                    scratch.fill(0, DEFAULT_BLOOM_FILTER_SIZE, (byte) 0);
+                    scratch.fill(0, bloomFilterSizeInBytes, (byte) 0);
                     // TODO: the big array might not provide a contiguous array
                     byte[] scratchArray = scratch.array();
                     bloomFilterTerms.data.readBytes(0, scratchArray, 0, scratchArray.length);
@@ -178,47 +190,19 @@ public class ES87BloomFilterPostingsFormat extends PostingsFormat {
                     }
                 }
                 // TODO: make it so it reads all the fields
-                bloomFilters.add(new BloomFilter(IdFieldMapper.NAME, written, DEFAULT_NUM_BITS_PER_BLOOM_FILTER));
+                bloomFilters.add(new BloomFilter(IdFieldMapper.NAME, written, bloomFilterNumberOfBits));
                 if (bloomFilterBuffer.hasArray()) {
-                    indexOut.writeBytes(bloomFilterBuffer.array(), 0, DEFAULT_BLOOM_FILTER_SIZE);
+                    indexOut.writeBytes(bloomFilterBuffer.array(), 0, bloomFilterSizeInBytes);
                 } else {
-                    BytesReference.fromByteArray(bloomFilterBuffer, DEFAULT_BLOOM_FILTER_SIZE)
-                        .writeTo(new IndexOutputOutputStream(indexOut));
+                    BytesReference.fromByteArray(bloomFilterBuffer, bloomFilterSizeInBytes).writeTo(new IndexOutputOutputStream(indexOut));
                 }
-            }
-        }
-
-        private void writePostings(Fields fields, NormsProducer norms) throws IOException {
-            final Map<PostingsFormat, FieldsGroup> currentGroups = new HashMap<>();
-            for (String field : fields) {
-                final PostingsFormat postingsFormat = postingsFormats.apply(field);
-                if (postingsFormat == null) {
-                    throw new IllegalStateException("PostingsFormat for field [" + field + "] wasn't specified");
-                }
-                FieldsGroup group = currentGroups.get(postingsFormat);
-                if (group == null) {
-                    group = new FieldsGroup(postingsFormat, Integer.toString(fieldsGroups.size()), new ArrayList<>());
-                    currentGroups.put(postingsFormat, group);
-                    fieldsGroups.add(group);
-                }
-                group.fields.add(field);
-            }
-            for (FieldsGroup group : currentGroups.values()) {
-                final FieldsConsumer writer = group.postingsFormat.fieldsConsumer(new SegmentWriteState(state, group.suffix));
-                toCloses.add(writer);
-                final Fields maskedFields = new FilterLeafReader.FilterFields(fields) {
-                    @Override
-                    public Iterator<String> iterator() {
-                        return group.fields.iterator();
-                    }
-                };
-                writer.write(maskedFields, norms);
             }
         }
 
         private void writeBloomFilters(Fields fields) throws IOException {
-            final int bloomFilterSize = DEFAULT_NUM_BITS_PER_BLOOM_FILTER;//bloomFilterSize(state.segmentInfo.maxDoc());
-            final int numBytes = DEFAULT_BLOOM_FILTER_SIZE; //numBytesForBloomFilter(bloomFilterSize);
+            var numBytes = bloomFilterSettings.getBloomFilterSizeInBytes();
+            var bloomFilterNumberOfBits = bloomFilterSettings.getBloomFilterSizeInBits();
+
             final int[] hashes = new int[NUM_HASH_FUNCTIONS];
             try (ByteArray buffer = bigArrays.newByteArray(numBytes, false)) {
                 long written = indexOut.getFilePointer();
@@ -235,14 +219,14 @@ public class ES87BloomFilterPostingsFormat extends PostingsFormat {
                             break;
                         }
                         for (int hash : hashTerm(term, hashes)) {
-                            hash = hash % bloomFilterSize;
+                            hash = hash % bloomFilterNumberOfBits;
                             final int pos = hash >> 3;
                             final int mask = 1 << (hash & 7);
                             final byte val = (byte) (buffer.get(pos) | mask);
                             buffer.set(pos, val);
                         }
                     }
-                    bloomFilters.add(new BloomFilter(field, written, bloomFilterSize));
+                    bloomFilters.add(new BloomFilter(field, written, bloomFilterNumberOfBits));
                     if (buffer.hasArray()) {
                         indexOut.writeBytes(buffer.array(), 0, numBytes);
                     } else {
@@ -268,11 +252,6 @@ public class ES87BloomFilterPostingsFormat extends PostingsFormat {
             }
             try (IndexOutput metaOut = state.directory.createOutput(metaFile(state.segmentInfo, state.segmentSuffix), state.context)) {
                 CodecUtil.writeIndexHeader(metaOut, BLOOM_CODEC_NAME, VERSION_CURRENT, state.segmentInfo.getId(), state.segmentSuffix);
-                // write postings formats
-                metaOut.writeVInt(fieldsGroups.size());
-                for (FieldsGroup group : fieldsGroups) {
-                    group.writeTo(metaOut, state.fieldInfos);
-                }
                 // Write bloom filters metadata
                 metaOut.writeVInt(bloomFilters.size());
                 for (BloomFilter bloomFilter : bloomFilters) {
@@ -299,41 +278,34 @@ public class ES87BloomFilterPostingsFormat extends PostingsFormat {
         }
     }
 
-    private record FieldsGroup(PostingsFormat postingsFormat, String suffix, List<String> fields) {
-        void writeTo(IndexOutput out, FieldInfos fieldInfos) throws IOException {
-            out.writeString(postingsFormat.getName());
-            out.writeString(suffix);
-            out.writeVInt(fields.size());
-            for (String field : fields) {
-                out.writeVInt(fieldInfos.fieldInfo(field).number);
-            }
-        }
-
-        static FieldsGroup readFrom(IndexInput in, FieldInfos fieldInfos) throws IOException {
-            final PostingsFormat postingsFormat = forName(in.readString());
-            final String suffix = in.readString();
-            final int numFields = in.readVInt();
-            final List<String> fields = new ArrayList<>();
-            for (int i = 0; i < numFields; i++) {
-                fields.add(fieldInfos.fieldInfo(in.readVInt()).name);
-            }
-            return new FieldsGroup(postingsFormat, suffix, fields);
-        }
-    }
-
     static final class FieldsReader extends FieldsProducer {
         private final Map<String, BloomFilter> bloomFilters;
+        @Nullable
+        private final SortedDocValues tsIds;
+        @Nullable
+        private final SortedNumericDocValues timestamps;
         private final List<Closeable> toCloses = new ArrayList<>();
-        private final Map<String, FieldsProducer> readerMap = new HashMap<>();
         private final IndexInput indexIn;
+        private final boolean loadBloomFilterInMemory;
 
-        FieldsReader(SegmentReadState state) throws IOException {
+        FieldsReader(SegmentReadState state, boolean loadBloomFilterInMemory) throws IOException {
+            this.loadBloomFilterInMemory = loadBloomFilterInMemory;
             boolean success = false;
-            var fieldInfo = state.fieldInfos.fieldInfo("_tsid");
-            SegmentReadState state1 = new SegmentReadState(state, "");
-            DocValuesProducer docValuesProducer = state.segmentInfo.getCodec().docValuesFormat().fieldsProducer(state1);
-            var tsIds = docValuesProducer.getSorted(fieldInfo);
-            var timestamps = docValuesProducer.getSortedNumeric(state.fieldInfos.fieldInfo("@timestamp"));
+            var tsIdFieldInfo = state.fieldInfos.fieldInfo(TimeSeriesIdFieldMapper.NAME);
+            if (tsIdFieldInfo != null) {
+                // Hack: The provided SegmentReadState uses the ES87BloomFilter suffix for filenames, while the tsids
+                // won't have that. Just use an empty suffix to circumvent this for now.
+                SegmentReadState segmentReadStateWithoutSuffix = new SegmentReadState(state, "");
+                DocValuesProducer docValuesProducer = state.segmentInfo.getCodec()
+                    .docValuesFormat()
+                    .fieldsProducer(segmentReadStateWithoutSuffix);
+                this.tsIds = docValuesProducer.getSorted(tsIdFieldInfo);
+                this.timestamps = docValuesProducer.getSortedNumeric(state.fieldInfos.fieldInfo("@timestamp"));
+                toCloses.add(docValuesProducer);
+            } else {
+                this.tsIds = null;
+                this.timestamps = null;
+            }
 
             try (ChecksumIndexInput metaIn = state.directory.openChecksumInput(metaFile(state.segmentInfo, state.segmentSuffix))) {
                 Map<String, BloomFilter> bloomFilters = null;
@@ -348,17 +320,6 @@ public class ES87BloomFilterPostingsFormat extends PostingsFormat {
                         state.segmentInfo.getId(),
                         state.segmentSuffix
                     );
-                    // read postings formats
-                    final int numFieldsGroups = metaIn.readVInt();
-                    for (int i = 0; i < numFieldsGroups; i++) {
-                        final FieldsGroup group = FieldsGroup.readFrom(metaIn, state.fieldInfos);
-
-                        final FieldsProducer reader = group.postingsFormat.fieldsProducer(new SegmentReadState(state, group.suffix));
-                        toCloses.add(reader);
-                        for (String field : group.fields) {
-                            readerMap.put(field, reader);
-                        }
-                    }
                     // read bloom filters
                     final int numBloomFilters = metaIn.readVInt();
                     bloomFilters = new HashMap<>(numBloomFilters);
@@ -395,16 +356,16 @@ public class ES87BloomFilterPostingsFormat extends PostingsFormat {
         }
 
         private boolean assertBloomFilterSizes(SegmentInfo segmentInfo) {
-//            for (BloomFilter bloomFilter : bloomFilters.values()) {
-//                assert bloomFilter.bloomFilterSize == bloomFilterSize(segmentInfo.maxDoc())
-//                    : "bloom_filter=" + bloomFilter + ", max_docs=" + segmentInfo.maxDoc();
-//            }
+            // for (BloomFilter bloomFilter : bloomFilters.values()) {
+            // assert bloomFilter.bloomFilterSize == bloomFilterSize(segmentInfo.maxDoc())
+            // : "bloom_filter=" + bloomFilter + ", max_docs=" + segmentInfo.maxDoc();
+            // }
             return true;
         }
 
         @Override
         public Iterator<String> iterator() {
-            return readerMap.keySet().iterator();
+            return bloomFilters.keySet().iterator();
         }
 
         @Override
@@ -412,11 +373,157 @@ public class ES87BloomFilterPostingsFormat extends PostingsFormat {
             IOUtils.close(toCloses);
         }
 
-        private static final Terms EMPTY =
-            new Terms() {
+        private static final Terms EMPTY = new Terms() {
+            @Override
+            public TermsEnum iterator() throws IOException {
+                return TermsEnum.EMPTY;
+            }
+
+            @Override
+            public long size() throws IOException {
+                return 0;
+            }
+
+            @Override
+            public long getSumTotalTermFreq() throws IOException {
+                return 0;
+            }
+
+            @Override
+            public long getSumDocFreq() throws IOException {
+                return 0;
+            }
+
+            @Override
+            public int getDocCount() throws IOException {
+                return 0;
+            }
+
+            @Override
+            public boolean hasFreqs() {
+                return false;
+            }
+
+            @Override
+            public boolean hasOffsets() {
+                return false;
+            }
+
+            @Override
+            public boolean hasPositions() {
+                return false;
+            }
+
+            @Override
+            public boolean hasPayloads() {
+                return false;
+            }
+        };
+
+        @Override
+        public Terms terms(String field) throws IOException {
+            final BloomFilter bloomFilter = bloomFilters.get(field);
+            if (bloomFilter != null) {
+                int numBytesForBloomFilter = numBytesForBloomFilter(bloomFilter.bloomFilterSize);
+                final RandomAccessInput data = indexIn.randomAccessSlice(bloomFilter.startFilePointer(), numBytesForBloomFilter);
+                if (loadBloomFilterInMemory) {
+                    var bloomFilterData = new byte[numBytesForBloomFilter];
+                    data.readBytes(0, bloomFilterData, 0, numBytesForBloomFilter);
+                    return new BloomFilterTerms(
+                        EMPTY,
+                        new ByteArrayIndexInput("bloom_filter", bloomFilterData),
+                        bloomFilter.bloomFilterSize
+                    );
+                } else {
+                    return new BloomFilterTerms(EMPTY, data, bloomFilter.bloomFilterSize);
+                }
+            } else {
+                return null;
+            }
+        }
+
+        private Terms syntheticTerms(String field) {
+            if (bloomFilters.containsKey(field) == false) {
+                return null;
+            }
+            assert field.equals(IdFieldMapper.NAME);
+
+            return new Terms() {
                 @Override
                 public TermsEnum iterator() throws IOException {
-                    return TermsEnum.EMPTY;
+                    var tsIdsTermsEnum = tsIds.termsEnum();
+
+                    return new TermsEnum() {
+                        @Override
+                        public BytesRef next() throws IOException {
+                            return null;
+                        }
+
+                        @Override
+                        public AttributeSource attributes() {
+                            return null;
+                        }
+
+                        @Override
+                        public boolean seekExact(BytesRef text) throws IOException {
+                            return false;
+                        }
+
+                        @Override
+                        public IOBooleanSupplier prepareSeekExact(BytesRef text) throws IOException {
+                            return null;
+                        }
+
+                        @Override
+                        public SeekStatus seekCeil(BytesRef text) throws IOException {
+                            return null;
+                        }
+
+                        @Override
+                        public void seekExact(long ord) throws IOException {
+
+                        }
+
+                        @Override
+                        public void seekExact(BytesRef term, TermState state) throws IOException {
+
+                        }
+
+                        @Override
+                        public BytesRef term() throws IOException {
+                            return null;
+                        }
+
+                        @Override
+                        public long ord() throws IOException {
+                            return 0;
+                        }
+
+                        @Override
+                        public int docFreq() throws IOException {
+                            return 0;
+                        }
+
+                        @Override
+                        public long totalTermFreq() throws IOException {
+                            return 0;
+                        }
+
+                        @Override
+                        public PostingsEnum postings(PostingsEnum reuse, int flags) throws IOException {
+                            return null;
+                        }
+
+                        @Override
+                        public ImpactsEnum impacts(int flags) throws IOException {
+                            return null;
+                        }
+
+                        @Override
+                        public TermState termState() throws IOException {
+                            return null;
+                        }
+                    };
                 }
 
                 @Override
@@ -436,7 +543,7 @@ public class ES87BloomFilterPostingsFormat extends PostingsFormat {
 
                 @Override
                 public int getDocCount() throws IOException {
-                    return 0;
+                    return timestamps.docValueCount();
                 }
 
                 @Override
@@ -459,54 +566,17 @@ public class ES87BloomFilterPostingsFormat extends PostingsFormat {
                     return false;
                 }
             };
-
-        @Override
-        public Terms terms(String field) throws IOException {
-            final FieldsProducer reader = readerMap.get(field);
-            if (reader == null) {
-                final BloomFilter bloomFilter4 = bloomFilters.get(field);
-                if (bloomFilter4 != null) {
-                    final RandomAccessInput data = indexIn.randomAccessSlice(
-                        bloomFilter4.startFilePointer(),
-                        numBytesForBloomFilter(bloomFilter4.bloomFilterSize)
-                    );
-                    return new BloomFilterTerms(EMPTY, data, bloomFilter4.bloomFilterSize);
-                } else {
-                    return null;
-                }
-            }
-            final Terms terms = reader.terms(field);
-            if (terms == null) {
-                return null;
-            }
-            final BloomFilter bloomFilter = bloomFilters.get(field);
-            if (bloomFilter != null) {
-                final RandomAccessInput data = indexIn.randomAccessSlice(
-                    bloomFilter.startFilePointer(),
-                    numBytesForBloomFilter(bloomFilter.bloomFilterSize)
-                );
-                return new BloomFilterTerms(terms, data, bloomFilter.bloomFilterSize);
-            } else {
-                return terms;
-            }
         }
 
         @Override
         public int size() {
-            return readerMap.size();
+            return bloomFilters.size();
         }
 
         @Override
         public void checkIntegrity() throws IOException {
             // already fully checked the meta file; let's fully checked the index file.
             CodecUtil.checksumEntireFile(indexIn);
-            // multiple fields can share the same reader
-            final Set<FieldsProducer> seenReaders = new HashSet<>();
-            for (FieldsProducer reader : readerMap.values()) {
-                if (seenReaders.add(reader)) {
-                    reader.checkIntegrity();
-                }
-            }
         }
     }
 

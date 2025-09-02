@@ -105,7 +105,6 @@ public class TsidExtractingIdFieldMapper extends IdFieldMapper {
         // We just concatenate the tsid + timestamp to create the _id so we can extract the tsid and timestamp
         // for lookups. Since we're just storing the tsid and timestamp it's fine if it's a bit longer
         byte[] bytes = new byte[tsid.length + Long.BYTES];
-        //        ByteUtils.writeIntLE(routingHash, bytes, 0);
         ByteUtils.writeLongBE(timestamp, bytes, 0);   // Big Ending shrinks the inverted index by ~37%
         System.arraycopy(tsid.bytes, 0, bytes, Long.BYTES, tsid.length);
 

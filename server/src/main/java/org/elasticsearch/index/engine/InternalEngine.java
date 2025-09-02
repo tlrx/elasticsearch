@@ -1048,7 +1048,7 @@ public class InternalEngine extends Engine {
     }
 
     /** resolves the current version of the document, returning null if not found */
-    private VersionValue resolveDocVersion(final Index op, boolean loadSeqNo) throws IOException {
+    private VersionValue resolveDocVersion(final Operation op, boolean loadSeqNo) throws IOException {
         assert incrementVersionLookup(); // used for asserting in tests
         VersionValue versionValue = getVersionFromMap(op.uid());
         if (versionValue == null) {
@@ -1058,10 +1058,20 @@ public class InternalEngine extends Engine {
                 directoryReader -> {
                     if (engineConfig.getIndexSettings().getMode() == IndexMode.TIME_SERIES) {
                         assert engineConfig.getLeafSorter() == DataStream.TIMESERIES_LEAF_READERS_SORTER;
-                        // TODO: move this into the Index class
-                        var tsIdField = op.docs().get(0).getByKey("_tsid");
-                        var tsId = tsIdField.binaryValue();
-                        return VersionsAndSeqNoResolver.timeSeriesLoadDocIdAndVersion(directoryReader, op.uid(), op.id(), tsId, loadSeqNo);
+                        if (op instanceof Index index) {
+                            // TODO: move this into the Index class
+                            var tsIdField = index.docs().get(0).getByKey("_tsid");
+                            var tsId = tsIdField.binaryValue();
+                            return VersionsAndSeqNoResolver.timeSeriesLoadDocIdAndVersion(
+                                directoryReader,
+                                op.uid(),
+                                op.id(),
+                                tsId,
+                                loadSeqNo
+                            );
+                        } else {
+                            return VersionsAndSeqNoResolver.timeSeriesLoadDocIdAndVersion(directoryReader, op.uid(), loadSeqNo);
+                        }
                     } else {
                         return VersionsAndSeqNoResolver.timeSeriesLoadDocIdAndVersion(directoryReader, op.uid(), loadSeqNo);
                     }
@@ -1443,7 +1453,7 @@ public class InternalEngine extends Engine {
                 updateDocs(index.uid(), index.docs(), indexWriter);
             } else {
                 // document does not exists, we can optimize for create, but double check if assertions are running
-                //assert assertDocDoesNotExist(index, canOptimizeAddDocument(index) == false);
+                // assert assertDocDoesNotExist(index, canOptimizeAddDocument(index) == false);
                 addDocs(index.docs(), indexWriter);
             }
             return new IndexResult(plan.versionForIndexing, index.primaryTerm(), index.seqNo(), plan.currentNotFoundOrDeleted, index.id());
@@ -1787,7 +1797,7 @@ public class InternalEngine extends Engine {
     private DeletionStrategy planDeletionAsPrimary(Delete delete) throws IOException {
         assert delete.origin() == Operation.Origin.PRIMARY : "planing as primary but got " + delete.origin();
         // resolve operation from external to internal
-        final VersionValue versionValue = resolveDocVersion(null, delete.getIfSeqNo() != SequenceNumbers.UNASSIGNED_SEQ_NO);
+        final VersionValue versionValue = resolveDocVersion(delete, delete.getIfSeqNo() != SequenceNumbers.UNASSIGNED_SEQ_NO);
         assert incrementVersionLookup();
         final long currentVersion;
         final boolean currentlyDeleted;

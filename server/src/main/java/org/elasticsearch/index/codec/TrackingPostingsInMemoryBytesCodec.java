@@ -11,14 +11,12 @@ package org.elasticsearch.index.codec;
 
 import org.apache.lucene.codecs.Codec;
 import org.apache.lucene.codecs.FieldsConsumer;
-import org.apache.lucene.codecs.FieldsProducer;
 import org.apache.lucene.codecs.FilterCodec;
 import org.apache.lucene.codecs.NormsProducer;
 import org.apache.lucene.codecs.PostingsFormat;
 import org.apache.lucene.index.FieldInfos;
 import org.apache.lucene.index.Fields;
 import org.apache.lucene.index.FilterLeafReader;
-import org.apache.lucene.index.SegmentReadState;
 import org.apache.lucene.index.SegmentWriteState;
 import org.apache.lucene.index.Terms;
 import org.apache.lucene.index.TermsEnum;
@@ -47,18 +45,18 @@ public class TrackingPostingsInMemoryBytesCodec extends FilterCodec {
         PostingsFormat format = super.postingsFormat();
 
         return format;
-//        return new PostingsFormat(format.getName()) {
-//            @Override
-//            public FieldsConsumer fieldsConsumer(SegmentWriteState state) throws IOException {
-//                FieldsConsumer consumer = format.fieldsConsumer(state);
-//                return new TrackingLengthFieldsConsumer(state, consumer);
-//            }
-//
-//            @Override
-//            public FieldsProducer fieldsProducer(SegmentReadState state) throws IOException {
-//                return format.fieldsProducer(state);
-//            }
-//        };
+        // return new PostingsFormat(format.getName()) {
+        // @Override
+        // public FieldsConsumer fieldsConsumer(SegmentWriteState state) throws IOException {
+        // FieldsConsumer consumer = format.fieldsConsumer(state);
+        // return new TrackingLengthFieldsConsumer(state, consumer);
+        // }
+        //
+        // @Override
+        // public FieldsProducer fieldsProducer(SegmentReadState state) throws IOException {
+        // return format.fieldsProducer(state);
+        // }
+        // };
     }
 
     static final class TrackingLengthFieldsConsumer extends FieldsConsumer {

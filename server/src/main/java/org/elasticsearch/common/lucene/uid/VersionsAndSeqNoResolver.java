@@ -174,7 +174,6 @@ public final class VersionsAndSeqNoResolver {
         return null;
     }
 
-
     /**
      * A special variant of loading docid and version in case of time series indices.
      * <p>
@@ -199,7 +198,7 @@ public final class VersionsAndSeqNoResolver {
         boolean loadSeqNo
     ) throws IOException {
         byte[] idAsBytes = Base64.getUrlDecoder().decode(id);
-        //assert idAsBytes.length == 20;
+        // assert idAsBytes.length == 20;
         // id format: [8 bytes @timestamp, _tsid]
         long timestamp = ByteUtils.readLongBE(idAsBytes, 0);
 
