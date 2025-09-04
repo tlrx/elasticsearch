@@ -104,7 +104,7 @@ public class MetricsDBIDRemovalIT extends ESIntegTestCase {
         }
         """;
 
-    public void testTsdbStartEndSet() throws Exception {
+    public void testSimpleScenario() throws Exception {
         var templateSettings = Settings.builder()
             .put("index.mode", "time_series")
             .put("index.routing_path", "metricset")
