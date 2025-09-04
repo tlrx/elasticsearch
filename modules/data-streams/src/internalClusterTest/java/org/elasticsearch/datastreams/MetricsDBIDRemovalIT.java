@@ -153,7 +153,7 @@ public class MetricsDBIDRemovalIT extends ESIntegTestCase {
         var result = client().prepareGet(index.get(0), ids.get(0)).execute().actionGet();
         var source = result.getSourceAsString();
 
-        // This breaks on refresh because it tries to find terms for the _id field, but we're returning an empty terms
+        // Delete breaks on refresh because it tries to find terms for the _id field, but we're returning an empty terms
         // and that would break while it tries to compute the live docs after a refresh.
         // See FrozenBufferedUpdates.applyDocValuesUpdates
 
