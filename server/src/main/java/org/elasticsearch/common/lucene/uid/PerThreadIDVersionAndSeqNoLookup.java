@@ -28,6 +28,7 @@ import org.elasticsearch.common.lucene.Lucene;
 import org.elasticsearch.common.lucene.uid.VersionsAndSeqNoResolver.DocIdAndSeqNo;
 import org.elasticsearch.common.lucene.uid.VersionsAndSeqNoResolver.DocIdAndVersion;
 import org.elasticsearch.common.util.ByteUtils;
+import org.elasticsearch.index.codec.bloomfilter.BloomFilterSettings;
 import org.elasticsearch.index.mapper.IdFieldMapper;
 import org.elasticsearch.index.mapper.SeqNoFieldMapper;
 import org.elasticsearch.index.mapper.TimeSeriesIdFieldMapper;
@@ -153,8 +154,12 @@ final class PerThreadIDVersionAndSeqNoLookup {
     }
 
     public int getDocIDForTsIdAndTimestamp(BytesRef id, BytesRef tsId, long timestamp, LeafReaderContext context) throws IOException {
+        if (BloomFilterSettings.SKIP_LOOKUP.get()) {
+            return DocIdSetIterator.NO_MORE_DOCS;
+        }
+
         // First check the bloom filter for the _id
-        if (termsEnum != null && termsEnum.seekExact(id)) {
+        if (termsEnum != null && (BloomFilterSettings.FORCE_LOOKUP.get() || termsEnum.seekExact(id))) {
             var tsIds = context.reader().getSortedDocValues(TimeSeriesIdFieldMapper.NAME); // sorted ascending order
             // Always a singleton field and sorted descending order:
             var timestamps = DocValues.unwrapSingleton(context.reader().getSortedNumericDocValues("@timestamp"));

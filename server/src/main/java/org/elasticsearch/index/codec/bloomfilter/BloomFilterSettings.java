@@ -12,23 +12,32 @@ package org.elasticsearch.index.codec.bloomfilter;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.ByteSizeValue;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+
 public class BloomFilterSettings {
-    private final int DEFAULT_BLOOM_FILTER_SIZE = Math.toIntExact(ByteSizeValue.ofKb(128).getBytes());
+    private static final int DEFAULT_BLOOM_FILTER_SIZE = Math.toIntExact(ByteSizeValue.ofKb(128).getBytes());
     public static final BloomFilterSettings DEFAULT_BLOOM_FILTER_SETTINGS = new BloomFilterSettings(Settings.EMPTY);
 
-    public BloomFilterSettings(Settings settings) {
+    // Poor man's settings
+    public static final AtomicBoolean SKIP_LOOKUP = new AtomicBoolean(false);
+    public static final AtomicBoolean FORCE_LOOKUP = new AtomicBoolean(false);
+    public static final AtomicBoolean LOAD_BLOOM_FILTER_IN_MEMORY = new AtomicBoolean(true);
+    public static final AtomicInteger BLOOM_FILTER_SIZE = new AtomicInteger(DEFAULT_BLOOM_FILTER_SIZE);
 
+    public BloomFilterSettings(Settings settings) {
+        // TODO: define index settings for this?
     }
 
     int getBloomFilterSizeInBytes() {
-        return DEFAULT_BLOOM_FILTER_SIZE;
+        return BLOOM_FILTER_SIZE.get();
     }
 
     int getBloomFilterSizeInBits() {
-        return DEFAULT_BLOOM_FILTER_SIZE * Byte.SIZE;
+        return BLOOM_FILTER_SIZE.get() * Byte.SIZE;
     }
 
     boolean loadBloomFilterInMemory() {
-        return true;
+        return LOAD_BLOOM_FILTER_IN_MEMORY.get();
     }
 }
