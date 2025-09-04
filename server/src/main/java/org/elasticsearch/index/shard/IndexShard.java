@@ -442,10 +442,6 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         this.mergeMetrics = mergeMetrics;
     }
 
-    public long tsdbBloomFilterSizeInBytes() {
-        return ByteSizeValue.ofKb(128).getBytes();
-    }
-
     public ThreadPool getThreadPool() {
         return this.threadPool;
     }

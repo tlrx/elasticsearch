@@ -149,7 +149,6 @@ public class TimeSeriesRoutingHashFieldMapper extends MetadataFieldMapper {
 
     public static int decode(String routingId) {
         byte[] bytes = Base64.getUrlDecoder().decode(routingId);
-        var x = new String(bytes);
         return ByteUtils.readIntLE(bytes, 0);
     }
 }
