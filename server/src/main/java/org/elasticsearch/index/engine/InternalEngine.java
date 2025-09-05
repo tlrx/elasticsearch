@@ -1637,6 +1637,9 @@ public class InternalEngine extends Engine {
 
     private void updateDocs(final BytesRef uid, final List<LuceneDocument> docs, final IndexWriter indexWriter) throws IOException {
         final Term uidTerm = new Term(IdFieldMapper.NAME, uid);
+        // timestamp
+        // _tsid
+        // query = match(_tsid) && match(timestamp)
         if (docs.size() > 1) {
             indexWriter.softUpdateDocuments(uidTerm, docs, softDeletesField);
         } else {

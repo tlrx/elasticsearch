@@ -105,8 +105,11 @@ public class TsidExtractingIdFieldMapper extends IdFieldMapper {
     }
 
     public static String createId(int routingHash, BytesRef tsid, long timestamp) {
-        // We just concatenate the tsid + timestamp to create the _id so we can extract the tsid and timestamp
-        // for lookups. Since we're just storing the tsid and timestamp it's fine if it's a bit longer
+        // We don't use the routing hash in the _id since in the future metricsdb won't rely on that.
+
+        // We just concatenate the tsid + timestamp to create the _id so we can extract the _tsid and timestamp
+        // for lookups (if we were to hash the _tsid again, it'll be impossible to get the original _tsid again for lookups).
+        // Since we're just storing the tsid and timestamp it's fine if it's a bit longer
         byte[] bytes = new byte[tsid.length + Long.BYTES];
         ByteUtils.writeLongBE(timestamp, bytes, 0);   // Big Ending shrinks the inverted index by ~37%
         System.arraycopy(tsid.bytes, 0, bytes, Long.BYTES, tsid.length);

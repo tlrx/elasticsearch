@@ -141,9 +141,12 @@ public class MetricsDBIDRemovalIT extends ESIntegTestCase {
         List<String> index = new ArrayList<>();
         var initialTime = time;
         for (int i = 0; i < 5; i++) {
-            String replacement = formatInstant(time);
+            String timestamp = formatInstant(time);
             var indexRequest = new IndexRequest("k8s").opType(DocWriteRequest.OpType.CREATE);
-            indexRequest.source(TSDB_DOC.replace("$time", replacement).replace("$metricset", "pod"), XContentType.JSON);
+            indexRequest.source(
+                TSDB_DOC.replace("$time", timestamp).replace("$metricset", "prod").replace("$host", "aws-1").replace("$pod", "pod-1"),
+                XContentType.JSON
+            );
             var indexResponse = safeGet(client().index(indexRequest));
             ids.add(indexResponse.getId());
             index.add(indexResponse.getIndex());
@@ -151,9 +154,12 @@ public class MetricsDBIDRemovalIT extends ESIntegTestCase {
             time = Instant.now();
         }
         for (int i = 0; i < 2; i++) {
-            String replacement = formatInstant(time);
+            String timestamp = formatInstant(time);
             var indexRequest = new IndexRequest("k8s").opType(DocWriteRequest.OpType.CREATE);
-            indexRequest.source(TSDB_DOC.replace("$time", replacement).replace("$metricset", "pod2"), XContentType.JSON);
+            indexRequest.source(
+                TSDB_DOC.replace("$time", timestamp).replace("$metricset", "qa").replace("$host", "aws-2").replace("$pod", "pod-1"),
+                XContentType.JSON
+            );
             var indexResponse = safeGet(client().index(indexRequest));
             ids.add(indexResponse.getId());
             safeSleep(50);
@@ -182,10 +188,13 @@ public class MetricsDBIDRemovalIT extends ESIntegTestCase {
         );
 
         for (int i = 0; i < 2; i++) {
-            String replacement = formatInstant(time);
+            String timestamp = formatInstant(time);
             var indexRequest = new IndexRequest("k8s").opType(DocWriteRequest.OpType.CREATE);
-            indexRequest.source(TSDB_DOC.replace("$time", replacement).replace("$metricset", "pod3"), XContentType.JSON);
-            var indexResponse = safeGet(client().index(indexRequest));
+            indexRequest.source(
+                TSDB_DOC.replace("$time", timestamp).replace("$metricset", "prod").replace("$host", "aws-1").replace("$pod", "pod-1"),
+                XContentType.JSON
+            );
+            safeGet(client().index(indexRequest));
             safeSleep(150);
             time = Instant.now();
         }
@@ -194,11 +203,18 @@ public class MetricsDBIDRemovalIT extends ESIntegTestCase {
 
         forceMerge();
 
+        // Try to create a document with an existing metricset, host thus and _id collision
         Throwable indexExceptionCause = expectThrows(
             IndexDocFailureStoreStatus.ExceptionWithFailureStoreStatus.class,
             () -> client().index(
                 new IndexRequest("k8s").opType(DocWriteRequest.OpType.CREATE)
-                    .source(TSDB_DOC.replace("$time", formatInstant(initialTime)).replace("$metricset", "pod"), XContentType.JSON)
+                    .source(
+                        TSDB_DOC.replace("$time", formatInstant(initialTime))
+                            .replace("$metricset", "prod")
+                            .replace("$host", "aws-1")
+                            .replace("$pod", "pod-1"),
+                        XContentType.JSON
+                    )
             ).actionGet()
         ).getCause();
         assertThat(indexExceptionCause.getClass(), equalTo(VersionConflictEngineException.class));
