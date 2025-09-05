@@ -18,6 +18,7 @@ import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.hash.MurmurHash3;
 import org.elasticsearch.common.hash.MurmurHash3.Hash128;
 import org.elasticsearch.common.util.ByteUtils;
+import org.elasticsearch.index.codec.bloomfilter.BloomFilterSettings;
 import org.elasticsearch.index.fielddata.FieldDataContext;
 import org.elasticsearch.index.fielddata.IndexFieldData;
 
@@ -97,7 +98,9 @@ public class TsidExtractingIdFieldMapper extends IdFieldMapper {
         context.id(id);
 
         BytesRef uidEncoded = Uid.encodeId(context.id());
-        context.doc().add(new StringField(NAME, uidEncoded, Field.Store.NO));
+        if (BloomFilterSettings.INDEX_ID.get()) {
+            context.doc().add(new StringField(NAME, uidEncoded, Field.Store.NO));
+        }
         return uidEncoded;
     }
 

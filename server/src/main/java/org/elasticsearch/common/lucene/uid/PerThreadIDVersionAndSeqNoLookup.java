@@ -76,7 +76,7 @@ final class PerThreadIDVersionAndSeqNoLookup {
             final NumericDocValues tombstoneDV = reader.getNumericDocValues(SeqNoFieldMapper.TOMBSTONE_NAME);
             // this is a special case when we pruned away all IDs in a segment since all docs are deleted.
             final boolean allDocsDeleted = (softDeletesDV != null && reader.numDocs() == 0);
-            if ((softDeletesDV == null || tombstoneDV == null) && allDocsDeleted == false) {
+            if ((softDeletesDV == null || tombstoneDV == null) && allDocsDeleted == false && BloomFilterSettings.INDEX_ID.get()) {
                 throw new IllegalArgumentException(
                     "reader does not have _uid terms but not a no-op segment; "
                         + "_soft_deletes ["
@@ -159,7 +159,7 @@ final class PerThreadIDVersionAndSeqNoLookup {
         }
 
         // First check the bloom filter for the _id
-        if (termsEnum != null && (BloomFilterSettings.FORCE_LOOKUP.get() || termsEnum.seekExact(id))) {
+        if (termsEnum != null && termsEnum.seekExact(id)) {
             var tsIds = context.reader().getSortedDocValues(TimeSeriesIdFieldMapper.NAME); // sorted ascending order
             // Always a singleton field and sorted descending order:
             var timestamps = DocValues.unwrapSingleton(context.reader().getSortedNumericDocValues("@timestamp"));

@@ -17,6 +17,7 @@ import org.apache.lucene.util.CloseableThreadLocal;
 import org.elasticsearch.common.util.ByteUtils;
 import org.elasticsearch.common.util.concurrent.ConcurrentCollections;
 import org.elasticsearch.core.Assertions;
+import org.elasticsearch.index.codec.bloomfilter.BloomFilterSettings;
 
 import java.io.IOException;
 import java.util.Base64;
@@ -197,6 +198,9 @@ public final class VersionsAndSeqNoResolver {
         BytesRef tsId,
         boolean loadSeqNo
     ) throws IOException {
+        if (BloomFilterSettings.SKIP_LOOKUP.get()) {
+            return null;
+        }
         byte[] idAsBytes = Base64.getUrlDecoder().decode(id);
         // assert idAsBytes.length == 20;
         // id format: [8 bytes @timestamp, _tsid]
@@ -210,11 +214,13 @@ public final class VersionsAndSeqNoResolver {
             PerThreadIDVersionAndSeqNoLookup lookup = lookups[leaf.ord];
             assert lookup.loadedTimestampRange;
             assert prevMaxTimestamp >= lookup.maxTimestamp;
-            if (timestamp < lookup.minTimestamp) {
-                continue;
-            }
-            if (timestamp > lookup.maxTimestamp) {
-                return null;
+            if (BloomFilterSettings.FORCE_SEGMENT_LOOKUP.get() == false) {
+                if (timestamp < lookup.minTimestamp) {
+                    continue;
+                }
+                if (timestamp > lookup.maxTimestamp) {
+                    return null;
+                }
             }
             DocIdAndVersion result = lookup.lookupVersionWithTsIdAndTimestamp(uid, tsId, timestamp, loadSeqNo, leaf);
             if (result != null) {

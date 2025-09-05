@@ -21,6 +21,7 @@ import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.index.IndexMode;
 import org.elasticsearch.index.IndexVersion;
 import org.elasticsearch.index.IndexVersions;
+import org.elasticsearch.index.codec.bloomfilter.BloomFilterSettings;
 import org.elasticsearch.index.fielddata.FieldData;
 import org.elasticsearch.index.fielddata.FieldDataContext;
 import org.elasticsearch.index.fielddata.IndexFieldData;
@@ -180,9 +181,11 @@ public class TimeSeriesIdFieldMapper extends MetadataFieldMapper {
         // We need to add the uid or id to nested Lucene documents so that when a document gets deleted, the nested documents are
         // also deleted. Usually this happens when the nested document is created (in DocumentParserContext#createNestedContext), but
         // for time-series indices the _id isn't available at that point.
-        for (LuceneDocument doc : context.nonRootDocuments()) {
-            assert doc.getField(IdFieldMapper.NAME) == null;
-            doc.add(new StringField(IdFieldMapper.NAME, uidEncoded, Field.Store.NO));
+        if (BloomFilterSettings.INDEX_ID.get()) {
+            for (LuceneDocument doc : context.nonRootDocuments()) {
+                assert doc.getField(IdFieldMapper.NAME) == null;
+                doc.add(new StringField(IdFieldMapper.NAME, uidEncoded, Field.Store.NO));
+            }
         }
     }
 

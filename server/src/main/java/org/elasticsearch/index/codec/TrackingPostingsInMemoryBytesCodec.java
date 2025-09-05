@@ -43,8 +43,8 @@ public class TrackingPostingsInMemoryBytesCodec extends FilterCodec {
     @Override
     public PostingsFormat postingsFormat() {
         // TODO: we keep the original postings format so it can decide its own merge strategy
-        //       org.apache.lucene.codecs.FieldsConsumer.merge instead of the default one in
-        //       the PostingsFormat wrapper
+        // org.apache.lucene.codecs.FieldsConsumer.merge instead of the default one in
+        // the PostingsFormat wrapper
         // return new PostingsFormat(format.getName()) {
         // @Override
         // public FieldsConsumer fieldsConsumer(SegmentWriteState state) throws IOException {

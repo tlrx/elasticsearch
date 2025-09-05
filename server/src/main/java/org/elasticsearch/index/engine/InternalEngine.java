@@ -233,6 +233,8 @@ public class InternalEngine extends Engine {
     protected static final String REAL_TIME_GET_REFRESH_SOURCE = "realtime_get";
     protected static final String UNSAFE_VERSION_MAP_REFRESH_SOURCE = "unsafe_version_map";
 
+    public final MeanMetric indexTimeMetric = new MeanMetric();
+
     @SuppressWarnings("this-escape")
     public InternalEngine(EngineConfig engineConfig) {
         this(engineConfig, IndexWriter.MAX_DOCS, LocalCheckpointTracker::new);
@@ -1186,6 +1188,7 @@ public class InternalEngine extends Engine {
     @Override
     public IndexResult index(Index index) throws IOException {
         final boolean doThrottle = index.origin().isRecovery() == false;
+        var indexingStartTime = relativeTimeInNanosSupplier.getAsLong();
         try (var ignored1 = acquireEnsureOpenRef()) {
             assert assertIncomingSequenceNumber(index.origin(), index.seqNo());
             int reservedDocs = 0;
@@ -1301,6 +1304,7 @@ public class InternalEngine extends Engine {
                     localCheckpointTracker.markSeqNoAsPersisted(indexResult.getSeqNo());
                 }
                 indexResult.setTook(relativeTimeInNanosSupplier.getAsLong() - index.startTime());
+                indexTimeMetric.inc(relativeTimeInNanosSupplier.getAsLong() - indexingStartTime);
                 indexResult.freeze();
                 return indexResult;
             } finally {

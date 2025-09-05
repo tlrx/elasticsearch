@@ -16,13 +16,15 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class BloomFilterSettings {
-    private static final int DEFAULT_BLOOM_FILTER_SIZE = Math.toIntExact(ByteSizeValue.ofKb(128).getBytes());
+    public static final int DEFAULT_BLOOM_FILTER_SIZE = Math.toIntExact(ByteSizeValue.ofMb(1).getBytes());
     public static final BloomFilterSettings DEFAULT_BLOOM_FILTER_SETTINGS = new BloomFilterSettings(Settings.EMPTY);
 
     // Poor man's settings
     public static final AtomicBoolean SKIP_LOOKUP = new AtomicBoolean(false);
+    public static final AtomicBoolean INDEX_ID = new AtomicBoolean(true);
+    public static final AtomicBoolean FORCE_SEGMENT_LOOKUP = new AtomicBoolean(false);
     public static final AtomicBoolean FORCE_LOOKUP = new AtomicBoolean(false);
-    public static final AtomicBoolean LOAD_BLOOM_FILTER_IN_MEMORY = new AtomicBoolean(true);
+    public static final AtomicBoolean LOAD_BLOOM_FILTER_IN_MEMORY = new AtomicBoolean(false);
     public static final AtomicInteger BLOOM_FILTER_SIZE = new AtomicInteger(DEFAULT_BLOOM_FILTER_SIZE);
 
     public BloomFilterSettings(Settings settings) {

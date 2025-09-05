@@ -54,7 +54,6 @@ import org.elasticsearch.common.lucene.index.ElasticsearchDirectoryReader;
 import org.elasticsearch.common.metrics.CounterMetric;
 import org.elasticsearch.common.metrics.MeanMetric;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.common.util.CollectionUtils;
 import org.elasticsearch.common.util.concurrent.AbstractRunnable;
@@ -94,6 +93,7 @@ import org.elasticsearch.index.engine.Engine.GetResult;
 import org.elasticsearch.index.engine.EngineConfig;
 import org.elasticsearch.index.engine.EngineException;
 import org.elasticsearch.index.engine.EngineFactory;
+import org.elasticsearch.index.engine.InternalEngine;
 import org.elasticsearch.index.engine.MergeMetrics;
 import org.elasticsearch.index.engine.ReadOnlyEngine;
 import org.elasticsearch.index.engine.RefreshFailedEngineException;
@@ -4840,6 +4840,14 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
     // package-private for tests
     EngineResetLock getEngineResetLock() {
         return engineResetLock;
+    }
+
+    public MeanMetric indexingTimeMetric() {
+        var engine = getEngine();
+        if (engine instanceof InternalEngine internalEngine) {
+            return internalEngine.indexTimeMetric;
+        }
+        return null;
     }
 
     private boolean assertNoEngineResetLock() {

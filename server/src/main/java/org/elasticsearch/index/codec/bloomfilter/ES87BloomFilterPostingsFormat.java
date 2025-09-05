@@ -171,30 +171,27 @@ public class ES87BloomFilterPostingsFormat extends PostingsFormat {
         public void merge(MergeState mergeState, NormsProducer norms) throws IOException {
             var bloomFilterSizeInBytes = bloomFilterSettings.getBloomFilterSizeInBytes();
             var bloomFilterNumberOfBits = bloomFilterSettings.getBloomFilterSizeInBits();
-            try (
-                var bloomFilterBuffer = bigArrays.newByteArray(bloomFilterSizeInBytes, false);
-                var scratch = bigArrays.newByteArray(bloomFilterSizeInBytes, false)
-            ) {
+            var scratch = new byte[bloomFilterSizeInBytes];
+            try (var mergedBloomFilterBuffer = bigArrays.newByteArray(bloomFilterSizeInBytes, false);) {
                 long written = indexOut.getFilePointer();
                 for (int readerIndex = 0; readerIndex < mergeState.fieldsProducers.length; readerIndex++) {
                     final var fieldsProducer = mergeState.fieldsProducers[readerIndex];
                     var bloomFilterTerms = (BloomFilterTerms) fieldsProducer.terms(IdFieldMapper.NAME);
-                    scratch.fill(0, bloomFilterSizeInBytes, (byte) 0);
-                    // TODO: the big array might not provide a contiguous array
-                    byte[] scratchArray = scratch.array();
-                    bloomFilterTerms.data.readBytes(0, scratchArray, 0, scratchArray.length);
-                    for (int i = 0; i < scratchArray.length; i++) {
-                        byte b = bloomFilterBuffer.get(i);
-                        byte b2 = scratchArray[i];
-                        bloomFilterBuffer.set(i, (byte) ((b & 0xFF) | (b2 & 0xFF)));
+
+                    bloomFilterTerms.data.readBytes(0, scratch, 0, bloomFilterSizeInBytes);
+                    for (int i = 0; i < bloomFilterSizeInBytes; i++) {
+                        byte b = mergedBloomFilterBuffer.get(i);
+                        byte b2 = scratch[i];
+                        mergedBloomFilterBuffer.set(i, (byte) (b | b2));
                     }
                 }
                 // TODO: make it so it reads all the fields
                 bloomFilters.add(new BloomFilter(IdFieldMapper.NAME, written, bloomFilterNumberOfBits));
-                if (bloomFilterBuffer.hasArray()) {
-                    indexOut.writeBytes(bloomFilterBuffer.array(), 0, bloomFilterSizeInBytes);
+                if (mergedBloomFilterBuffer.hasArray()) {
+                    indexOut.writeBytes(mergedBloomFilterBuffer.array(), 0, bloomFilterSizeInBytes);
                 } else {
-                    BytesReference.fromByteArray(bloomFilterBuffer, bloomFilterSizeInBytes).writeTo(new IndexOutputOutputStream(indexOut));
+                    BytesReference.fromByteArray(mergedBloomFilterBuffer, bloomFilterSizeInBytes)
+                        .writeTo(new IndexOutputOutputStream(indexOut));
                 }
             }
         }
