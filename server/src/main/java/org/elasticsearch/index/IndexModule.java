@@ -26,6 +26,7 @@ import org.elasticsearch.cluster.routing.ShardRouting;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.TriFunction;
 import org.elasticsearch.common.io.stream.NamedWriteableRegistry;
+import org.elasticsearch.common.lucene.SyntheticIdDirectoryReader;
 import org.elasticsearch.common.settings.Setting;
 import org.elasticsearch.common.settings.Setting.Property;
 import org.elasticsearch.common.settings.Settings;
@@ -501,6 +502,19 @@ public final class IndexModule {
         final IndexEventListener eventListener = freeze();
         Function<IndexService, CheckedFunction<DirectoryReader, DirectoryReader, IOException>> readerWrapperFactory = indexReaderWrapper
             .get() == null ? (shard) -> null : indexReaderWrapper.get();
+        // Additionnal wrapper for synthetic _id
+        if (indexSettings().getMode() == IndexMode.TIME_SERIES) {
+            final var factory = readerWrapperFactory;
+            Function<IndexService, CheckedFunction<DirectoryReader, DirectoryReader, IOException>> wrapper =
+                indexService -> directoryReader -> {
+                    var result = factory.apply(indexService);
+                    if (result != null) {
+                        return result.apply(new SyntheticIdDirectoryReader(directoryReader));
+                    }
+                    return new SyntheticIdDirectoryReader(directoryReader);
+                };
+            readerWrapperFactory = wrapper;
+        }
         eventListener.beforeIndexCreated(indexSettings.getIndex(), indexSettings.getSettings());
         final IndexStorePlugin.DirectoryFactory directoryFactory = getDirectoryFactory(indexSettings, directoryFactories);
         final IndexStorePlugin.RecoveryStateFactory recoveryStateFactory = getRecoveryStateFactory(indexSettings, recoveryStateFactories);

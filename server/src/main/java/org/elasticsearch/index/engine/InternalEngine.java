@@ -1060,6 +1060,8 @@ public class InternalEngine extends Engine {
                 directoryReader -> {
                     if (engineConfig.getIndexSettings().getMode() == IndexMode.TIME_SERIES) {
                         assert engineConfig.getLeafSorter() == DataStream.TIMESERIES_LEAF_READERS_SORTER;
+                        return VersionsAndSeqNoResolver.timeSeriesLoadDocIdAndVersion(directoryReader, op.uid(), op.id(), loadSeqNo);
+                        /*
                         if (op instanceof Index index) {
                             // TODO: move this into the Index class
                             var tsIdField = index.docs().get(0).getByKey("_tsid");
@@ -1073,7 +1075,7 @@ public class InternalEngine extends Engine {
                             );
                         } else {
                             return VersionsAndSeqNoResolver.timeSeriesLoadDocIdAndVersion(directoryReader, op.uid(), loadSeqNo);
-                        }
+                        }*/
                     } else {
                         return VersionsAndSeqNoResolver.timeSeriesLoadDocIdAndVersion(directoryReader, op.uid(), loadSeqNo);
                     }

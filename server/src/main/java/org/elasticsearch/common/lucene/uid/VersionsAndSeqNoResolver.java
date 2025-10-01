@@ -14,12 +14,13 @@ import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.CloseableThreadLocal;
+import org.elasticsearch.common.lucene.SyntheticIdLeafReader;
 import org.elasticsearch.common.util.ByteUtils;
 import org.elasticsearch.common.util.concurrent.ConcurrentCollections;
 import org.elasticsearch.core.Assertions;
-import org.elasticsearch.index.codec.bloomfilter.BloomFilterSettings;
 
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
 import java.util.concurrent.ConcurrentMap;
@@ -63,7 +64,7 @@ public final class VersionsAndSeqNoResolver {
         if (lookupState == null) {
             lookupState = new PerThreadIDVersionAndSeqNoLookup[reader.leaves().size()];
             for (LeafReaderContext leaf : reader.leaves()) {
-                lookupState[leaf.ord] = new PerThreadIDVersionAndSeqNoLookup(leaf.reader(), loadTimestampRange);
+                lookupState[leaf.ord] = new PerThreadIDVersionAndSeqNoLookup(new SyntheticIdLeafReader(leaf.reader()), loadTimestampRange);
             }
             ctl.set(lookupState);
         } else {
@@ -131,6 +132,9 @@ public final class VersionsAndSeqNoResolver {
      * </ul>
      */
     public static DocIdAndVersion timeSeriesLoadDocIdAndVersion(IndexReader reader, BytesRef term, boolean loadSeqNo) throws IOException {
+        var uid = term.bytes;
+        System.out.println("Get ID:\r\n" + Arrays.toString(uid));
+
         PerThreadIDVersionAndSeqNoLookup[] lookups = getLookupState(reader, false);
         List<LeafReaderContext> leaves = reader.leaves();
         // iterate backwards to optimize for the frequently updated documents
@@ -142,35 +146,6 @@ public final class VersionsAndSeqNoResolver {
             if (result != null) {
                 return result;
             }
-        }
-        return null;
-    }
-
-    public static DocIdAndVersion timeSeriesLoadDocIdAndVersion(IndexReader reader, BytesRef uid, String id, boolean loadSeqNo)
-        throws IOException {
-        byte[] idAsBytes = Base64.getUrlDecoder().decode(id);
-        // id format: [8 bytes @timestamp, _tsid]
-        long timestamp = ByteUtils.readLongBE(idAsBytes, 0);
-
-        PerThreadIDVersionAndSeqNoLookup[] lookups = getLookupState(reader, true);
-        List<LeafReaderContext> leaves = reader.leaves();
-        // iterate in default order, the segments should be sorted by DataStream#TIMESERIES_LEAF_READERS_SORTER
-        long prevMaxTimestamp = Long.MAX_VALUE;
-        for (final LeafReaderContext leaf : leaves) {
-            PerThreadIDVersionAndSeqNoLookup lookup = lookups[leaf.ord];
-            assert lookup.loadedTimestampRange;
-            assert prevMaxTimestamp >= lookup.maxTimestamp;
-            if (timestamp < lookup.minTimestamp) {
-                continue;
-            }
-            if (timestamp > lookup.maxTimestamp) {
-                return null;
-            }
-            DocIdAndVersion result = lookup.lookupVersion(uid, loadSeqNo, leaf);
-            if (result != null) {
-                return result;
-            }
-            prevMaxTimestamp = lookup.maxTimestamp;
         }
         return null;
     }
@@ -191,20 +166,12 @@ public final class VersionsAndSeqNoResolver {
      *         returning <code>null</code> if no document was found for the specified id
      * @throws IOException In case of an i/o related failure
      */
-    public static DocIdAndVersion timeSeriesLoadDocIdAndVersion(
-        IndexReader reader,
-        BytesRef uid,
-        String id,
-        BytesRef tsId,
-        boolean loadSeqNo
-    ) throws IOException {
-        if (BloomFilterSettings.SKIP_LOOKUP.get()) {
-            return null;
-        }
-        byte[] idAsBytes = Base64.getUrlDecoder().decode(id);
-        // assert idAsBytes.length == 20;
-        // id format: [8 bytes @timestamp, _tsid]
-        long timestamp = ByteUtils.readLongBE(idAsBytes, 0);
+    public static DocIdAndVersion timeSeriesLoadDocIdAndVersion(IndexReader reader, BytesRef uid, String id, boolean loadSeqNo)
+        throws IOException {
+        assert Arrays.equals(uid.bytes, Base64.getUrlDecoder().decode(id));
+        System.out.println("Resolved Version ID:\r\n" + id + "\n" + Arrays.toString(uid.bytes));
+        // synthetic id format: [8 bytes @timestamp, _tsid]
+        long timestamp = ByteUtils.readLongBE(uid.bytes, 0);
 
         PerThreadIDVersionAndSeqNoLookup[] lookups = getLookupState(reader, true);
         List<LeafReaderContext> leaves = reader.leaves();
@@ -214,15 +181,13 @@ public final class VersionsAndSeqNoResolver {
             PerThreadIDVersionAndSeqNoLookup lookup = lookups[leaf.ord];
             assert lookup.loadedTimestampRange;
             assert prevMaxTimestamp >= lookup.maxTimestamp;
-            if (BloomFilterSettings.FORCE_SEGMENT_LOOKUP.get() == false) {
-                if (timestamp < lookup.minTimestamp) {
-                    continue;
-                }
-                if (timestamp > lookup.maxTimestamp) {
-                    return null;
-                }
+            if (timestamp < lookup.minTimestamp) {
+                continue;
             }
-            DocIdAndVersion result = lookup.lookupVersionWithTsIdAndTimestamp(uid, tsId, timestamp, loadSeqNo, leaf);
+            if (timestamp > lookup.maxTimestamp) {
+                return null;
+            }
+            DocIdAndVersion result = lookup.lookupVersion(uid, loadSeqNo, leaf);
             if (result != null) {
                 return result;
             }

@@ -47,8 +47,8 @@ import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.store.RandomAccessInput;
 import org.apache.lucene.util.AttributeSource;
 import org.apache.lucene.util.BytesRef;
-import org.apache.lucene.util.IOBooleanSupplier;
 import org.elasticsearch.common.bytes.BytesReference;
+import org.elasticsearch.common.lucene.SyntheticIdTerms;
 import org.elasticsearch.common.lucene.store.ByteArrayIndexInput;
 import org.elasticsearch.common.lucene.store.IndexOutputOutputStream;
 import org.elasticsearch.common.util.BigArrays;
@@ -284,6 +284,7 @@ public class ES87BloomFilterPostingsFormat extends PostingsFormat {
         private final List<Closeable> toCloses = new ArrayList<>();
         private final IndexInput indexIn;
         private final boolean loadBloomFilterInMemory;
+        private final int maxDocs;
 
         FieldsReader(SegmentReadState state, boolean loadBloomFilterInMemory) throws IOException {
             this.loadBloomFilterInMemory = loadBloomFilterInMemory;
@@ -344,6 +345,7 @@ public class ES87BloomFilterPostingsFormat extends PostingsFormat {
                 );
                 CodecUtil.retrieveChecksum(indexIn, indexFileLength);
                 assert assertBloomFilterSizes(state.segmentInfo);
+                this.maxDocs = state.segmentInfo.maxDoc();
                 success = true;
             } finally {
                 if (success == false) {
@@ -370,55 +372,10 @@ public class ES87BloomFilterPostingsFormat extends PostingsFormat {
             IOUtils.close(toCloses);
         }
 
-        private static final Terms EMPTY = new Terms() {
-            @Override
-            public TermsEnum iterator() throws IOException {
-                return TermsEnum.EMPTY;
-            }
-
-            @Override
-            public long size() throws IOException {
-                return 0;
-            }
-
-            @Override
-            public long getSumTotalTermFreq() throws IOException {
-                return 0;
-            }
-
-            @Override
-            public long getSumDocFreq() throws IOException {
-                return 0;
-            }
-
-            @Override
-            public int getDocCount() throws IOException {
-                return 0;
-            }
-
-            @Override
-            public boolean hasFreqs() {
-                return false;
-            }
-
-            @Override
-            public boolean hasOffsets() {
-                return false;
-            }
-
-            @Override
-            public boolean hasPositions() {
-                return false;
-            }
-
-            @Override
-            public boolean hasPayloads() {
-                return false;
-            }
-        };
-
         @Override
         public Terms terms(String field) throws IOException {
+            final SyntheticIdTerms syntheticIds = SyntheticIdTerms.from(tsIds, timestamps, maxDocs);
+
             final BloomFilter bloomFilter = bloomFilters.get(field);
             if (bloomFilter != null) {
                 int numBytesForBloomFilter = numBytesForBloomFilter(bloomFilter.bloomFilterSize);
@@ -427,142 +384,16 @@ public class ES87BloomFilterPostingsFormat extends PostingsFormat {
                     var bloomFilterData = new byte[numBytesForBloomFilter];
                     data.readBytes(0, bloomFilterData, 0, numBytesForBloomFilter);
                     return new BloomFilterTerms(
-                        EMPTY,
+                        syntheticIds,
                         new ByteArrayIndexInput("bloom_filter", bloomFilterData),
                         bloomFilter.bloomFilterSize
                     );
                 } else {
-                    return new BloomFilterTerms(EMPTY, data, bloomFilter.bloomFilterSize);
+                    return new BloomFilterTerms(syntheticIds, data, bloomFilter.bloomFilterSize);
                 }
             } else {
-                return null;
+                return syntheticIds;
             }
-        }
-
-        private Terms syntheticTerms(String field) {
-            if (bloomFilters.containsKey(field) == false) {
-                return null;
-            }
-            assert field.equals(IdFieldMapper.NAME);
-
-            return new Terms() {
-                @Override
-                public TermsEnum iterator() throws IOException {
-                    var tsIdsTermsEnum = tsIds.termsEnum();
-
-                    return new TermsEnum() {
-                        @Override
-                        public BytesRef next() throws IOException {
-                            return null;
-                        }
-
-                        @Override
-                        public AttributeSource attributes() {
-                            return null;
-                        }
-
-                        @Override
-                        public boolean seekExact(BytesRef text) throws IOException {
-                            return false;
-                        }
-
-                        @Override
-                        public IOBooleanSupplier prepareSeekExact(BytesRef text) throws IOException {
-                            return null;
-                        }
-
-                        @Override
-                        public SeekStatus seekCeil(BytesRef text) throws IOException {
-                            return null;
-                        }
-
-                        @Override
-                        public void seekExact(long ord) throws IOException {
-
-                        }
-
-                        @Override
-                        public void seekExact(BytesRef term, TermState state) throws IOException {
-
-                        }
-
-                        @Override
-                        public BytesRef term() throws IOException {
-                            return null;
-                        }
-
-                        @Override
-                        public long ord() throws IOException {
-                            return 0;
-                        }
-
-                        @Override
-                        public int docFreq() throws IOException {
-                            return 0;
-                        }
-
-                        @Override
-                        public long totalTermFreq() throws IOException {
-                            return 0;
-                        }
-
-                        @Override
-                        public PostingsEnum postings(PostingsEnum reuse, int flags) throws IOException {
-                            return null;
-                        }
-
-                        @Override
-                        public ImpactsEnum impacts(int flags) throws IOException {
-                            return null;
-                        }
-
-                        @Override
-                        public TermState termState() throws IOException {
-                            return null;
-                        }
-                    };
-                }
-
-                @Override
-                public long size() throws IOException {
-                    return 0;
-                }
-
-                @Override
-                public long getSumTotalTermFreq() throws IOException {
-                    return 0;
-                }
-
-                @Override
-                public long getSumDocFreq() throws IOException {
-                    return 0;
-                }
-
-                @Override
-                public int getDocCount() throws IOException {
-                    return timestamps.docValueCount();
-                }
-
-                @Override
-                public boolean hasFreqs() {
-                    return false;
-                }
-
-                @Override
-                public boolean hasOffsets() {
-                    return false;
-                }
-
-                @Override
-                public boolean hasPositions() {
-                    return false;
-                }
-
-                @Override
-                public boolean hasPayloads() {
-                    return false;
-                }
-            };
         }
 
         @Override
@@ -617,7 +448,10 @@ public class ES87BloomFilterPostingsFormat extends PostingsFormat {
 
                 @Override
                 public boolean seekExact(BytesRef term) throws IOException {
-                    return mayContainTerm(term);
+                    if(mayContainTerm(term)) {
+                        return getDelegate().seekExact(term);
+                    }
+                    return false;
                 }
 
                 @Override

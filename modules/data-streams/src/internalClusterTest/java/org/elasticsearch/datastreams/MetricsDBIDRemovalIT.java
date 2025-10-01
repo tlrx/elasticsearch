@@ -10,8 +10,10 @@
 package org.elasticsearch.datastreams;
 
 import org.elasticsearch.action.DocWriteRequest;
+import org.elasticsearch.action.DocWriteResponse;
 import org.elasticsearch.action.admin.indices.template.put.TransportPutComposableIndexTemplateAction;
 import org.elasticsearch.action.bulk.IndexDocFailureStoreStatus;
+import org.elasticsearch.action.delete.DeleteResponse;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.cluster.metadata.ComposableIndexTemplate;
 import org.elasticsearch.cluster.metadata.ProjectId;
@@ -21,6 +23,7 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.time.DateFormatter;
 import org.elasticsearch.common.time.FormatNames;
 import org.elasticsearch.core.TimeValue;
+import org.elasticsearch.index.IndexSettings;
 import org.elasticsearch.index.codec.bloomfilter.BloomFilterSettings;
 import org.elasticsearch.index.engine.VersionConflictEngineException;
 import org.elasticsearch.index.shard.IndexShard;
@@ -34,17 +37,26 @@ import org.elasticsearch.xcontent.XContentType;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import static java.time.temporal.ChronoUnit.HOURS;
 import static org.elasticsearch.index.query.QueryBuilders.matchAllQuery;
+import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertHitCount;
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertNoFailuresAndResponse;
 import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.not;
 
 public class MetricsDBIDRemovalIT extends ESIntegTestCase {
     @Override
     protected Collection<Class<? extends Plugin>> nodePlugins() {
         return List.of(DataStreamsPlugin.class);
+    }
+
+    @Override
+    protected boolean addMockInternalEngine() {
+        return false;
     }
 
     private static final String TSDB_MAPPING = """
@@ -120,7 +132,8 @@ public class MetricsDBIDRemovalIT extends ESIntegTestCase {
         var templateSettings = Settings.builder()
             .put("index.mode", "time_series")
             .put("index.routing_path", "metricset")
-            .put("index.number_of_replicas", 0);
+            .put("index.number_of_replicas", 0)
+            .put(IndexSettings.INDEX_REFRESH_INTERVAL_SETTING.getKey(), -1);
         var mapping = new CompressedXContent(TSDB_MAPPING);
 
         // create template
@@ -134,11 +147,13 @@ public class MetricsDBIDRemovalIT extends ESIntegTestCase {
         );
         safeGet(client().execute(TransportPutComposableIndexTemplateAction.TYPE, request));
 
-        // index doc
-        Instant time = Instant.now();
-
         List<String> ids = new ArrayList<>();
         List<String> index = new ArrayList<>();
+        Map<String, Long> seqNos = new HashMap<>();
+        Map<String, String> timestamps = new HashMap<>();
+
+        // index doc
+        Instant time = Instant.now();
         var initialTime = time;
         for (int i = 0; i < 5; i++) {
             String timestamp = formatInstant(time);
@@ -150,6 +165,8 @@ public class MetricsDBIDRemovalIT extends ESIntegTestCase {
             var indexResponse = safeGet(client().index(indexRequest));
             ids.add(indexResponse.getId());
             index.add(indexResponse.getIndex());
+            seqNos.put(indexResponse.getId(), indexResponse.getSeqNo());
+            timestamps.put(indexResponse.getId(), timestamp);
             safeSleep(50);
             time = Instant.now();
         }
@@ -162,27 +179,72 @@ public class MetricsDBIDRemovalIT extends ESIntegTestCase {
             );
             var indexResponse = safeGet(client().index(indexRequest));
             ids.add(indexResponse.getId());
+            index.add(indexResponse.getIndex());
+            seqNos.put(indexResponse.getId(), indexResponse.getSeqNo());
+            timestamps.put(indexResponse.getId(), timestamp);
             safeSleep(50);
             time = Instant.now();
         }
 
+        {
+            var getResponse = client().prepareGet(index.getFirst(), ids.getFirst()).execute().actionGet();
+            assertThat(getResponse.isExists(), equalTo(true));
+        }
+
+        assertHitCount(client().prepareSearch("k8s").setSize(0), 0L);
+
+        // Delete doc in in-memory segment
+        {
+            var docId = ids.getLast();
+            var indexName = index.getLast();
+
+            // Realtime Get
+            var getResponse = client().prepareGet(indexName, docId).setRealtime(true).setFetchSource(true).execute().actionGet();
+            assertThat(getResponse.isExists(), equalTo(true));
+            assertThat(getResponse.getId(), equalTo(docId));
+            logger.info("----- Deleting doc [index: {}, id: {}]\r\n{}\n", indexName, docId, getResponse.getSourceAsString());
+
+            // Delete
+            DeleteResponse deleteResponse = client().prepareDelete(indexName, docId).get();
+            assertEquals(DocWriteResponse.Result.DELETED, deleteResponse.getResult());
+            logger.info("{}\r\n-----", deleteResponse.getResult().getLowercase());
+        }
+
+        assertHitCount(client().prepareSearch("k8s").setSize(0), 0L);
+
         refresh("k8s");
 
-        var result = client().prepareGet(index.get(0), ids.get(0)).execute().actionGet();
-        var source = result.getSourceAsString();
+        //assertHitCount(client().prepareSearch("k8s").setSize(0), 6L);
 
-        // Delete breaks on refresh because it tries to find terms for the _id field, but we're returning an empty terms
-        // and that would break while it tries to compute the live docs after a refresh.
-        // See FrozenBufferedUpdates.applyDocValuesUpdates
+        // Delete doc from segment on disk
+        {
+            var docId = ids.get(2);
+            var indexName = index.get(2);
 
-        // client().prepareDelete(index.get(0), ids.get(0)).execute().actionGet();
-        // refresh("k8s");
+            // Get
+            var getResponse = client().prepareGet(indexName, docId).execute().actionGet();
+            assertThat(getResponse.isExists(), equalTo(true));
+            assertThat(getResponse.getId(), equalTo(docId));
+            logger.info("----- Deleting doc [index: {}, id: {}]\r\n{}\n", indexName, docId, getResponse.getSourceAsString());
+
+            // Delete
+            DeleteResponse deleteResponse = client().prepareDelete(indexName, docId).get();
+            assertEquals(DocWriteResponse.Result.DELETED, deleteResponse.getResult());
+            logger.info("{}\r\n-----", deleteResponse.getResult().getLowercase());
+        }
+
+//        assertHitCount(client().prepareSearch("k8s").setSize(0), 6L);
+
+        refresh("k8s");
 
         assertNoFailuresAndResponse(
             client().prepareSearch("k8s").setFetchSource(true).setQuery(matchAllQuery()).execute(),
             searchResponse -> {
+                assertHitCount(searchResponse, 5L);
                 for (SearchHit hit : searchResponse.getHits()) {
                     logger.info("hit: {} {}", hit.getId(), hit.getSourceAsString());
+                    assertThat(hit.getId(), not(equalTo(ids.get(2))));
+                    assertThat(hit.getId(), not(equalTo(ids.getLast())));
                 }
             }
         );

@@ -18,10 +18,10 @@ import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.hash.MurmurHash3;
 import org.elasticsearch.common.hash.MurmurHash3.Hash128;
 import org.elasticsearch.common.util.ByteUtils;
-import org.elasticsearch.index.codec.bloomfilter.BloomFilterSettings;
 import org.elasticsearch.index.fielddata.FieldDataContext;
 import org.elasticsearch.index.fielddata.IndexFieldData;
 
+import java.util.Arrays;
 import java.util.Locale;
 
 /**
@@ -96,13 +96,11 @@ public class TsidExtractingIdFieldMapper extends IdFieldMapper {
             );
         }
         context.id(id);
-
-        BytesRef uidEncoded = Uid.encodeId(context.id());
-        if (BloomFilterSettings.INDEX_ID.get()) {
-            context.doc().add(new StringField(NAME, uidEncoded, Field.Store.NO));
-        }
-        return uidEncoded;
+        context.doc().add(SYNTHETIC_ID_PLACEHOLDER_FIELD);
+        return Uid.encodeId(context.id());
     }
+
+    private static final StringField SYNTHETIC_ID_PLACEHOLDER_FIELD = new StringField(NAME, "synthetic", Field.Store.NO);
 
     public static String createId(int routingHash, BytesRef tsid, long timestamp) {
         // We don't use the routing hash in the _id since in the future metricsdb won't rely on that.
@@ -114,7 +112,10 @@ public class TsidExtractingIdFieldMapper extends IdFieldMapper {
         ByteUtils.writeLongBE(timestamp, bytes, 0);   // Big Ending shrinks the inverted index by ~37%
         System.arraycopy(tsid.bytes, 0, bytes, Long.BYTES, tsid.length);
 
-        return Strings.BASE_64_NO_PADDING_URL_ENCODER.encodeToString(bytes);
+        var idAsString = Strings.BASE_64_NO_PADDING_URL_ENCODER.encodeToString(bytes);
+        System.out.println("createID :\r\n" + idAsString + "\n" + Arrays.toString(bytes));
+
+        return idAsString;
     }
 
     public static String createId(

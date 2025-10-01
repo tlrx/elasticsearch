@@ -10,7 +10,6 @@
 package org.elasticsearch.common.lucene.uid;
 
 import org.apache.lucene.document.LongPoint;
-import org.apache.lucene.index.DocValues;
 import org.apache.lucene.index.DocValuesSkipIndexType;
 import org.apache.lucene.index.DocValuesSkipper;
 import org.apache.lucene.index.FieldInfo;
@@ -22,16 +21,14 @@ import org.apache.lucene.index.PostingsEnum;
 import org.apache.lucene.index.Terms;
 import org.apache.lucene.index.TermsEnum;
 import org.apache.lucene.search.DocIdSetIterator;
+import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.cluster.metadata.DataStream;
 import org.elasticsearch.common.lucene.Lucene;
 import org.elasticsearch.common.lucene.uid.VersionsAndSeqNoResolver.DocIdAndSeqNo;
 import org.elasticsearch.common.lucene.uid.VersionsAndSeqNoResolver.DocIdAndVersion;
-import org.elasticsearch.common.util.ByteUtils;
-import org.elasticsearch.index.codec.bloomfilter.BloomFilterSettings;
 import org.elasticsearch.index.mapper.IdFieldMapper;
 import org.elasticsearch.index.mapper.SeqNoFieldMapper;
-import org.elasticsearch.index.mapper.TimeSeriesIdFieldMapper;
 import org.elasticsearch.index.mapper.VersionFieldMapper;
 
 import java.io.IOException;
@@ -76,7 +73,7 @@ final class PerThreadIDVersionAndSeqNoLookup {
             final NumericDocValues tombstoneDV = reader.getNumericDocValues(SeqNoFieldMapper.TOMBSTONE_NAME);
             // this is a special case when we pruned away all IDs in a segment since all docs are deleted.
             final boolean allDocsDeleted = (softDeletesDV != null && reader.numDocs() == 0);
-            if ((softDeletesDV == null || tombstoneDV == null) && allDocsDeleted == false && BloomFilterSettings.INDEX_ID.get()) {
+            if ((softDeletesDV == null || tombstoneDV == null) && allDocsDeleted == false) {
                 throw new IllegalArgumentException(
                     "reader does not have _uid terms but not a no-op segment; "
                         + "_soft_deletes ["
@@ -138,94 +135,6 @@ final class PerThreadIDVersionAndSeqNoLookup {
             : "context's reader is not the same as the reader class was initialized on.";
         int docID = getDocID(id, context);
 
-        return getDocIdAndVersionForDoc(loadSeqNo, context, docID);
-    }
-
-    public DocIdAndVersion lookupVersionWithTsIdAndTimestamp(
-        BytesRef id,
-        BytesRef tsId,
-        long timestamp,
-        boolean loadSeqNo,
-        LeafReaderContext context
-    ) throws IOException {
-        int docID = getDocIDForTsIdAndTimestamp(id, tsId, timestamp, context);
-
-        return getDocIdAndVersionForDoc(loadSeqNo, context, docID);
-    }
-
-    public int getDocIDForTsIdAndTimestamp(BytesRef id, BytesRef tsId, long timestamp, LeafReaderContext context) throws IOException {
-        if (BloomFilterSettings.SKIP_LOOKUP.get()) {
-            return DocIdSetIterator.NO_MORE_DOCS;
-        }
-
-        // First check the bloom filter for the _id
-        if (termsEnum != null && termsEnum.seekExact(id)) {
-            var tsIds = context.reader().getSortedDocValues(TimeSeriesIdFieldMapper.NAME); // sorted ascending order
-            // Always a singleton field and sorted descending order:
-            var timestamps = DocValues.unwrapSingleton(context.reader().getSortedNumericDocValues("@timestamp"));
-
-            int targetTsidOrd = tsIds.lookupTerm(tsId);
-            var liveDocs = context.reader().getLiveDocs();
-            if (targetTsidOrd > 0) {
-                int startDocId = -1;
-                int endDocId = -1;
-                int maxDocId = context.reader().maxDoc();
-                // Find the range of documents that match the given _tsid. Since _tsid's define
-                // the primary ordering for the documents stored in a segment, we can just skip
-                // documents whose _tsid ordinal is below or beyond targetTsidOrd.
-
-                // This could take advantage of the doc value skippers to do a more efficient
-                // docId search, but these are not exposed in a public API yet.
-                for (int docId = tsIds.nextDoc(); docId < maxDocId; docId = tsIds.nextDoc()) {
-                    int tsidOrd = tsIds.ordValue();
-                    if (tsidOrd < targetTsidOrd) {
-                        continue;
-                    }
-                    if (tsidOrd == targetTsidOrd && startDocId == -1) {
-                        startDocId = docId;
-                    }
-                    if (tsidOrd > targetTsidOrd || docId == maxDocId - 1) {
-                        if (startDocId != -1) {
-                            endDocId = docId;
-                            break;
-                        } else {
-                            return DocIdSetIterator.NO_MORE_DOCS;
-                        }
-                    }
-                }
-                for (int docId = startDocId; docId <= endDocId; docId++) {
-                    if (timestamps.advanceExact(docId)) {
-                        long docTimestamp = timestamps.longValue();
-                        if (docTimestamp == timestamp) {
-                            if (liveDocs == null || liveDocs.get(docId)) {
-                                return docId;
-                            }
-                        } else if (docTimestamp < timestamp) {
-                            return DocIdSetIterator.NO_MORE_DOCS;
-                        }
-                    }
-                }
-            }
-        }
-        return DocIdSetIterator.NO_MORE_DOCS;
-    }
-
-    /**
-     * returns the internal lucene doc id for the given id bytes.
-     * {@link DocIdSetIterator#NO_MORE_DOCS} is returned if not found
-     * */
-    private int getDocID(BytesRef id, LeafReaderContext context) throws IOException {
-        // TODO: avoid doing the parsing too often
-        // _id synthetic format = [timestamp(long), tsid]
-        byte[] idAsBytes = id.bytes;
-        long timestamp = ByteUtils.readLongBE(idAsBytes, 0);
-        byte[] tsId = new byte[idAsBytes.length - Long.BYTES];
-        System.arraycopy(idAsBytes, Long.BYTES, tsId, 0, tsId.length);
-
-        return getDocIDForTsIdAndTimestamp(id, new BytesRef(tsId), timestamp, context);
-    }
-
-    private static DocIdAndVersion getDocIdAndVersionForDoc(boolean loadSeqNo, LeafReaderContext context, int docID) throws IOException {
         if (docID != DocIdSetIterator.NO_MORE_DOCS) {
             final long seqNo;
             final long term;
@@ -240,6 +149,29 @@ final class PerThreadIDVersionAndSeqNoLookup {
             return new DocIdAndVersion(docID, version, seqNo, term, context.reader(), context.docBase);
         } else {
             return null;
+        }
+    }
+
+    /**
+     * returns the internal lucene doc id for the given id bytes.
+     * {@link DocIdSetIterator#NO_MORE_DOCS} is returned if not found
+     * */
+    private int getDocID(BytesRef id, LeafReaderContext context) throws IOException {
+        // termsEnum can possibly be null here if this leaf contains only no-ops.
+        if (termsEnum != null && termsEnum.seekExact(id)) {
+            final Bits liveDocs = context.reader().getLiveDocs();
+            int docID = DocIdSetIterator.NO_MORE_DOCS;
+            // there may be more than one matching docID, in the case of nested docs, so we want the last one:
+            docsEnum = termsEnum.postings(docsEnum, 0);
+            for (int d = docsEnum.nextDoc(); d != DocIdSetIterator.NO_MORE_DOCS; d = docsEnum.nextDoc()) {
+                if (liveDocs != null && liveDocs.get(d) == false) {
+                    continue;
+                }
+                docID = d;
+            }
+            return docID;
+        } else {
+            return DocIdSetIterator.NO_MORE_DOCS;
         }
     }
 
