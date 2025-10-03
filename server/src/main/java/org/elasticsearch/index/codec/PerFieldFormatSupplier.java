@@ -68,7 +68,11 @@ public class PerFieldFormatSupplier {
 
     public PerFieldFormatSupplier(MapperService mapperService, BigArrays bigArrays) {
         this.mapperService = mapperService;
-        this.bloomFilterPostingsFormat = new ES87BloomFilterPostingsFormat(bigArrays, this::internalGetPostingsFormatForField);
+        this.bloomFilterPostingsFormat = new ES87BloomFilterPostingsFormat(
+            bigArrays,
+            this::internalGetPostingsFormatForField,
+            mapperService != null && mapperService.getIndexSettings().useSyntheticId()
+        );
 
         if (mapperService != null
             && mapperService.getIndexSettings().getIndexVersionCreated().onOrAfter(IndexVersions.UPGRADE_TO_LUCENE_10_3_0)

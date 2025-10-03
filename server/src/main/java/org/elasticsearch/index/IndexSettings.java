@@ -667,6 +667,14 @@ public final class IndexSettings {
         Property.Final
     );
 
+    public static final boolean SYNTHETIC_ID = new FeatureFlag("synthetic_id").isEnabled();
+    public static final Setting<Boolean> USE_SYNTHETIC_ID = Setting.boolSetting(
+        "index.mapping.use_synthetic_id",
+        false,
+        Property.IndexScope,
+        Property.Final
+    );
+
     public static final boolean DOC_VALUES_SKIPPER = new FeatureFlag("doc_values_skipper").isEnabled();
     public static final Setting<Boolean> USE_DOC_VALUES_SKIPPER = Setting.boolSetting(
         "index.mapping.use_doc_values_skipper",
@@ -935,6 +943,7 @@ public final class IndexSettings {
     private final boolean recoverySourceEnabled;
     private final boolean recoverySourceSyntheticEnabled;
     private final boolean useDocValuesSkipper;
+    private final boolean useSyntheticId;
 
     /**
      * The maximum number of refresh listeners allows on this shard.
@@ -1119,6 +1128,7 @@ public final class IndexSettings {
         recoverySourceSyntheticEnabled = DiscoveryNode.isStateless(nodeSettings) == false
             && scopedSettings.get(RECOVERY_USE_SYNTHETIC_SOURCE_SETTING);
         useDocValuesSkipper = DOC_VALUES_SKIPPER && scopedSettings.get(USE_DOC_VALUES_SKIPPER);
+        useSyntheticId = mode == IndexMode.TIME_SERIES && SYNTHETIC_ID && scopedSettings.get(USE_SYNTHETIC_ID);
         seqNoIndexOptions = scopedSettings.get(SEQ_NO_INDEX_OPTIONS_SETTING);
         if (recoverySourceSyntheticEnabled) {
             if (DiscoveryNode.isStateless(settings)) {
@@ -1830,6 +1840,10 @@ public final class IndexSettings {
 
     public boolean useDocValuesSkipper() {
         return useDocValuesSkipper;
+    }
+
+    public boolean useSyntheticId() {
+        return useSyntheticId;
     }
 
     /**

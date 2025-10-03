@@ -10,7 +10,9 @@
 package org.elasticsearch.index.mapper;
 
 import org.apache.lucene.document.Field;
+import org.apache.lucene.document.FieldType;
 import org.apache.lucene.document.StringField;
+import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.IndexableField;
 import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.cluster.routing.IndexRouting;
@@ -22,6 +24,7 @@ import org.elasticsearch.common.util.ByteUtils;
 import org.elasticsearch.index.fielddata.FieldDataContext;
 import org.elasticsearch.index.fielddata.IndexFieldData;
 
+import java.io.IOException;
 import java.util.Locale;
 
 /**
@@ -47,9 +50,19 @@ public class TsidExtractingIdFieldMapper extends IdFieldMapper {
 
     private static final long SEED = 0;
 
+    protected TsidExtractingIdFieldMapper(MappedFieldType mappedFieldType) {
+        super(mappedFieldType);
+    }
+
+    @Override
+    public void postParse(DocumentParserContext context) throws IOException {
+        super.postParse(context);
+    }
+
     public static BytesRef createField(DocumentParserContext context, RoutingHashBuilder routingBuilder, BytesRef tsid) {
         final long timestamp = DataStreamTimestampFieldMapper.extractTimestampValue(context.doc());
         String id;
+        boolean isSyntheticId = false;
         if (routingBuilder != null) {
             byte[] suffix = new byte[16];
             id = createId(context.hasDynamicMappers(), routingBuilder, tsid, timestamp, suffix);
@@ -67,8 +80,13 @@ public class TsidExtractingIdFieldMapper extends IdFieldMapper {
                 || context.getDynamicRuntimeFields().isEmpty() == false
                 || id.equals(indexRouting.createId(context.sourceToParse().getXContentType(), context.sourceToParse().source(), suffix));
         } else if (context.sourceToParse().routing() != null) {
-            int routingHash = TimeSeriesRoutingHashFieldMapper.decode(context.sourceToParse().routing());
-            id = createId(routingHash, tsid, timestamp);
+            if (context.indexSettings().useSyntheticId()) {
+                id = createSyntheticId(tsid, timestamp);
+                isSyntheticId = true;
+            } else {
+                int routingHash = TimeSeriesRoutingHashFieldMapper.decode(context.sourceToParse().routing());
+                id = createId(routingHash, tsid, timestamp);
+            }
         } else {
             if (context.sourceToParse().id() == null) {
                 throw new IllegalArgumentException(
@@ -93,9 +111,46 @@ public class TsidExtractingIdFieldMapper extends IdFieldMapper {
         }
         context.id(id);
 
+        // Too many encode/decode in the current method...
+
         BytesRef uidEncoded = Uid.encodeId(context.id());
-        context.doc().add(new StringField(NAME, uidEncoded, Field.Store.YES));
+        if (isSyntheticId) {
+            // Synthetic ids are not written to disk, but they must be hashed into the bloom filter (which is written to disk)
+            context.doc().add(syntheticIdField(uidEncoded));
+        } else {
+            context.doc().add(new StringField(NAME, uidEncoded, Field.Store.YES));
+        }
         return uidEncoded;
+    }
+
+    private static class SyntheticIdField extends Field {
+
+        private static final FieldType FIELD_TYPE;
+        static {
+            var fieldType = new FieldType();
+            // Postings are not written to disk, they are skipped in:
+            // org.elasticsearch.index.codec.bloomfilter.ES87BloomFilterPostingsFormat.FieldsWriter.write
+            fieldType.setIndexOptions(IndexOptions.DOCS);
+            fieldType.setOmitNorms(false);
+            fieldType.setTokenized(false);
+            fieldType.setStored(false);
+            FIELD_TYPE = fieldType;
+        }
+
+        protected SyntheticIdField(BytesRef syntheticId) {
+            super(NAME, syntheticId, FIELD_TYPE);
+        }
+    }
+
+    public static String createSyntheticId(BytesRef tsid, long timestamp) {
+        byte[] syntheticId = new byte[Long.BYTES + tsid.length];
+        ByteUtils.writeLongBE(timestamp, syntheticId, 0);
+        System.arraycopy(tsid.bytes, 0, syntheticId, Long.BYTES, tsid.length);
+        return Strings.BASE_64_NO_PADDING_URL_ENCODER.encodeToString(syntheticId);
+    }
+
+    public static Field syntheticIdField(BytesRef uid) {
+        return new SyntheticIdField(uid);
     }
 
     public static String createId(int routingHash, BytesRef tsid, long timestamp) {

@@ -73,12 +73,16 @@ public class ParsedDocument {
      * @param id    the id of the deleted document
      */
     public static ParsedDocument deleteTombstone(SeqNoFieldMapper.SeqNoIndexOptions seqNoIndexOptions, String id) {
+        return deleteTombstone(seqNoIndexOptions, id, IdFieldMapper.standardIdField(id));
+    }
+
+    public static ParsedDocument deleteTombstone(SeqNoFieldMapper.SeqNoIndexOptions seqNoIndexOptions, String id, Field idField) {
         LuceneDocument document = new LuceneDocument();
         SeqNoFieldMapper.SequenceIDFields seqIdFields = SeqNoFieldMapper.SequenceIDFields.tombstone(seqNoIndexOptions);
         seqIdFields.addFields(document);
         Field versionField = VersionFieldMapper.versionField();
         document.add(versionField);
-        document.add(IdFieldMapper.standardIdField(id));
+        document.add(idField);
         return new ParsedDocument(
             versionField,
             seqIdFields,

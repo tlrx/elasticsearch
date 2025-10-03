@@ -61,6 +61,7 @@ import org.elasticsearch.common.metrics.CounterMetric;
 import org.elasticsearch.common.metrics.MeanMetric;
 import org.elasticsearch.common.unit.ByteSizeUnit;
 import org.elasticsearch.common.unit.ByteSizeValue;
+import org.elasticsearch.common.util.ByteUtils;
 import org.elasticsearch.common.util.Maps;
 import org.elasticsearch.common.util.concurrent.AbstractRunnable;
 import org.elasticsearch.common.util.concurrent.AsyncIOProcessor;
@@ -89,6 +90,7 @@ import org.elasticsearch.index.mapper.MappingLookup;
 import org.elasticsearch.index.mapper.ParsedDocument;
 import org.elasticsearch.index.mapper.SeqNoFieldMapper;
 import org.elasticsearch.index.mapper.SourceFieldMapper;
+import org.elasticsearch.index.mapper.TsidExtractingIdFieldMapper;
 import org.elasticsearch.index.mapper.Uid;
 import org.elasticsearch.index.merge.MergeStats;
 import org.elasticsearch.index.merge.OnGoingMerge;
@@ -111,6 +113,7 @@ import org.elasticsearch.threadpool.ThreadPool;
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
@@ -134,6 +137,7 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import static org.elasticsearch.common.lucene.Lucene.SOFT_DELETES_FIELD;
 import static org.elasticsearch.core.Strings.format;
 
 public class InternalEngine extends Engine {
@@ -1059,7 +1063,29 @@ public class InternalEngine extends Engine {
                 directoryReader -> {
                     if (engineConfig.getIndexSettings().getMode() == IndexMode.TIME_SERIES) {
                         assert engineConfig.getLeafSorter() == DataStream.TIMESERIES_LEAF_READERS_SORTER;
-                        return VersionsAndSeqNoResolver.timeSeriesLoadDocIdAndVersion(directoryReader, op.uid(), op.id(), loadSeqNo);
+                        if (engineConfig.getIndexSettings().useSyntheticId()) {
+                            assert Arrays.equals(op.uid().bytes, Base64.getUrlDecoder().decode(op.id()));
+                            // synthetic id format: [@timestamp (8 bytes ), _tsid (routing fields/dimensions encoded as UTF-8 bytes]
+                            long timestamp = ByteUtils.readLongBE(op.uid().bytes, 0);
+
+                            if (logger.isInfoEnabled()) {
+                                byte[] tsId = new byte[op.uid().length - Long.BYTES];
+                                System.arraycopy(op.uid().bytes, Long.BYTES, tsId, 0, tsId.length);
+                                logger.info(
+                                    Strings.format(
+                                        "Loading synthetic doc id and version:\n\t"
+                                            + "@timestamp:\n\t\t%d\n\t_tsid:\n\t\t%s\n\t_id:\n\t\t%s\n\t\t%s\n\n",
+                                        timestamp,
+                                        Arrays.toString(tsId),
+                                        op.id(),
+                                        Arrays.toString(Base64.getUrlDecoder().decode(op.id()))
+                                    )
+                                );
+                            }
+                            return VersionsAndSeqNoResolver.timeSeriesLoadDocIdAndVersion(directoryReader, op.uid(), timestamp, loadSeqNo);
+                        } else {
+                            return VersionsAndSeqNoResolver.timeSeriesLoadDocIdAndVersion(directoryReader, op.uid(), op.id(), loadSeqNo);
+                        }
                     } else {
                         return VersionsAndSeqNoResolver.timeSeriesLoadDocIdAndVersion(directoryReader, op.uid(), loadSeqNo);
                     }
@@ -1842,7 +1868,10 @@ public class InternalEngine extends Engine {
         try {
             final ParsedDocument tombstone = ParsedDocument.deleteTombstone(
                 engineConfig.getIndexSettings().seqNoIndexOptions(),
-                delete.id()
+                delete.id(),
+                engineConfig.getIndexSettings().useSyntheticId()
+                    ? TsidExtractingIdFieldMapper.syntheticIdField(delete.uid())
+                    : IdFieldMapper.standardIdField(delete.id())
             );
             assert tombstone.docs().size() == 1 : "Tombstone doc should have single doc [" + tombstone + "]";
             tombstone.updateSeqID(delete.seqNo(), delete.primaryTerm());
@@ -2777,7 +2806,7 @@ public class InternalEngine extends Engine {
         // background merges
         MergePolicy mergePolicy = config().getMergePolicy();
         // always configure soft-deletes field so an engine with soft-deletes disabled can open a Lucene index with soft-deletes.
-        iwc.setSoftDeletesField(Lucene.SOFT_DELETES_FIELD);
+        iwc.setSoftDeletesField(SOFT_DELETES_FIELD);
         mergePolicy = new RecoverySourcePruneMergePolicy(
             engineConfig.getIndexSettings().isRecoverySourceSyntheticEnabled() ? null : SourceFieldMapper.RECOVERY_SOURCE_NAME,
             engineConfig.getIndexSettings().isRecoverySourceSyntheticEnabled()
@@ -2786,7 +2815,7 @@ public class InternalEngine extends Engine {
             engineConfig.getIndexSettings().getMode() == IndexMode.TIME_SERIES,
             () -> softDeletesPolicy.getRetentionQuery(engineConfig.getIndexSettings().seqNoIndexOptions()),
             new SoftDeletesRetentionMergePolicy(
-                Lucene.SOFT_DELETES_FIELD,
+                SOFT_DELETES_FIELD,
                 () -> softDeletesPolicy.getRetentionQuery(engineConfig.getIndexSettings().seqNoIndexOptions()),
                 new PrunePostingsMergePolicy(mergePolicy, IdFieldMapper.NAME)
             )

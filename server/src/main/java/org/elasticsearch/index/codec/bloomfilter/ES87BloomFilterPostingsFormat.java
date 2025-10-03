@@ -20,6 +20,7 @@
 package org.elasticsearch.index.codec.bloomfilter;
 
 import org.apache.lucene.codecs.CodecUtil;
+import org.apache.lucene.codecs.DocValuesProducer;
 import org.apache.lucene.codecs.FieldsConsumer;
 import org.apache.lucene.codecs.FieldsProducer;
 import org.apache.lucene.codecs.NormsProducer;
@@ -44,11 +45,14 @@ import org.apache.lucene.store.RandomAccessInput;
 import org.apache.lucene.util.AttributeSource;
 import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.common.bytes.BytesReference;
+import org.elasticsearch.common.lucene.SyntheticIdFieldsProducer;
+import org.elasticsearch.common.lucene.SyntheticIdTerms;
 import org.elasticsearch.common.lucene.store.IndexOutputOutputStream;
 import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.common.util.ByteArray;
 import org.elasticsearch.common.util.ByteUtils;
 import org.elasticsearch.core.IOUtils;
+import org.elasticsearch.index.mapper.IdFieldMapper;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -82,11 +86,17 @@ public class ES87BloomFilterPostingsFormat extends PostingsFormat {
 
     private Function<String, PostingsFormat> postingsFormats;
     private BigArrays bigArrays;
+    private boolean useSyntheticId;
 
     public ES87BloomFilterPostingsFormat(BigArrays bigArrays, Function<String, PostingsFormat> postingsFormats) {
+        this(bigArrays, postingsFormats, false);
+    }
+
+    public ES87BloomFilterPostingsFormat(BigArrays bigArrays, Function<String, PostingsFormat> postingsFormats, boolean useSyntheticId) {
         this();
         this.bigArrays = Objects.requireNonNull(bigArrays);
         this.postingsFormats = Objects.requireNonNull(postingsFormats);
+        this.useSyntheticId = useSyntheticId;
     }
 
     public ES87BloomFilterPostingsFormat() {
@@ -99,12 +109,19 @@ public class ES87BloomFilterPostingsFormat extends PostingsFormat {
             assert false : BLOOM_CODEC_NAME + " was initialized with a wrong constructor";
             throw new UnsupportedOperationException(BLOOM_CODEC_NAME + " was initialized with a wrong constructor");
         }
-        return new FieldsWriter(state);
+        return new FieldsWriter(state, useSyntheticId);
     }
 
     @Override
     public FieldsProducer fieldsProducer(SegmentReadState state) throws IOException {
-        return new FieldsReader(state);
+        if (useSyntheticId == false) {
+            assert postingsFormats == null;
+            assert postingsFormats == null;
+            // This method can be called on a ES87BloomFilterPostingsFormat initialized with the default constructor,
+            // but not fieldsConsumer(SegmentWriteState)? We can't pass the useSyntheticId correctly.
+            return new FieldsReader(state, true);
+        }
+        return new FieldsReader(state, useSyntheticId);
     }
 
     @Override
@@ -126,15 +143,17 @@ public class ES87BloomFilterPostingsFormat extends PostingsFormat {
         private final List<BloomFilter> bloomFilters = new ArrayList<>();
         private final List<FieldsGroup> fieldsGroups = new ArrayList<>();
         private final List<Closeable> toCloses = new ArrayList<>();
+        private final boolean useSyntheticId;
         private boolean closed;
 
-        FieldsWriter(SegmentWriteState state) throws IOException {
+        FieldsWriter(SegmentWriteState state, boolean useSyntheticId) throws IOException {
             this.state = state;
             boolean success = false;
             try {
                 indexOut = state.directory.createOutput(indexFile(state.segmentInfo, state.segmentSuffix), state.context);
                 toCloses.add(indexOut);
                 CodecUtil.writeIndexHeader(indexOut, BLOOM_CODEC_NAME, VERSION_CURRENT, state.segmentInfo.getId(), state.segmentSuffix);
+                this.useSyntheticId = useSyntheticId;
                 success = true;
             } finally {
                 if (success == false) {
@@ -163,6 +182,9 @@ public class ES87BloomFilterPostingsFormat extends PostingsFormat {
                     fieldsGroups.add(group);
                 }
                 group.fields.add(field);
+            }
+            if (useSyntheticId) {
+                return; // Do not write postings on disk when synthetic ids are used
             }
             for (FieldsGroup group : currentGroups.values()) {
                 final FieldsConsumer writer = group.postingsFormat.fieldsConsumer(new SegmentWriteState(state, group.suffix));
@@ -288,8 +310,11 @@ public class ES87BloomFilterPostingsFormat extends PostingsFormat {
         private final Map<String, FieldsProducer> readerMap = new HashMap<>();
         private final IndexInput indexIn;
 
-        FieldsReader(SegmentReadState state) throws IOException {
+        private final boolean useSyntheticId;
+
+        FieldsReader(SegmentReadState state, boolean useSyntheticId) throws IOException {
             boolean success = false;
+            this.useSyntheticId = useSyntheticId;
             try (ChecksumIndexInput metaIn = state.directory.openChecksumInput(metaFile(state.segmentInfo, state.segmentSuffix))) {
                 Map<String, BloomFilter> bloomFilters = null;
                 Throwable priorE = null;
@@ -307,7 +332,12 @@ public class ES87BloomFilterPostingsFormat extends PostingsFormat {
                     final int numFieldsGroups = metaIn.readVInt();
                     for (int i = 0; i < numFieldsGroups; i++) {
                         final FieldsGroup group = FieldsGroup.readFrom(metaIn, state.fieldInfos);
-                        final FieldsProducer reader = group.postingsFormat.fieldsProducer(new SegmentReadState(state, group.suffix));
+                        final FieldsProducer reader;
+                        if (useSyntheticId) {
+                            reader = syntheticIdFieldsProducer(new SegmentReadState(state, group.suffix));
+                        } else {
+                            reader = group.postingsFormat.fieldsProducer(new SegmentReadState(state, group.suffix));
+                        }
                         toCloses.add(reader);
                         for (String field : group.fields) {
                             readerMap.put(field, reader);
@@ -320,7 +350,6 @@ public class ES87BloomFilterPostingsFormat extends PostingsFormat {
                         final BloomFilter bloomFilter = BloomFilter.readFrom(metaIn, state.fieldInfos);
                         bloomFilters.put(bloomFilter.field, bloomFilter);
                     }
-
                     indexFileLength = metaIn.readVLong();
                 } catch (Throwable t) {
                     priorE = t;
@@ -340,10 +369,35 @@ public class ES87BloomFilterPostingsFormat extends PostingsFormat {
                 );
                 CodecUtil.retrieveChecksum(indexIn, indexFileLength);
                 assert assertBloomFilterSizes(state.segmentInfo);
+                if (useSyntheticId) {
+                    assert readerMap.size() == 1 : readerMap;
+                    assert readerMap.containsKey(IdFieldMapper.NAME);
+                    assert bloomFilters.containsKey(IdFieldMapper.NAME);
+                }
                 success = true;
             } finally {
                 if (success == false) {
                     IOUtils.closeWhileHandlingException(toCloses);
+                }
+            }
+        }
+
+        private FieldsProducer syntheticIdFieldsProducer(SegmentReadState state) throws IOException {
+            assert useSyntheticId : "should only be called when synthetic ids are used";
+
+            DocValuesProducer docValuesProducer = null;
+            boolean success = false;
+            try {
+                var codec = state.segmentInfo.getCodec();
+                // Hack: The provided SegmentReadState uses the ES87BloomFilter suffix for filenames, while the tsids
+                // won't have that. Just use an empty suffix to circumvent this for now.
+                docValuesProducer = codec.docValuesFormat().fieldsProducer(new SegmentReadState(state, ""));
+                var fieldsProducer = new SyntheticIdFieldsProducer(state, docValuesProducer);
+                success = true;
+                return fieldsProducer;
+            } finally {
+                if (success == false) {
+                    IOUtils.close(docValuesProducer);
                 }
             }
         }
@@ -443,6 +497,11 @@ public class ES87BloomFilterPostingsFormat extends PostingsFormat {
                         delegate = in.iterator();
                     }
                     return delegate;
+                }
+
+                @Override
+                public SeekStatus seekCeil(BytesRef text) throws IOException {
+                    return getDelegate().seekCeil(text);
                 }
 
                 @Override

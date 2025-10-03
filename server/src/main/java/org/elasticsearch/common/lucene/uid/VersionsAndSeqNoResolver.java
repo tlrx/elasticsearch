@@ -168,7 +168,11 @@ public final class VersionsAndSeqNoResolver {
         // id format: [4 bytes (basic hash routing fields), 8 bytes prefix of 128 murmurhash dimension fields, 8 bytes
         // @timestamp)
         long timestamp = ByteUtils.readLongBE(idAsBytes, 12);
+        return timeSeriesLoadDocIdAndVersion(reader, uid, timestamp, loadSeqNo);
+    }
 
+    public static DocIdAndVersion timeSeriesLoadDocIdAndVersion(IndexReader reader, BytesRef uid, long timestamp, boolean loadSeqNo)
+        throws IOException {
         PerThreadIDVersionAndSeqNoLookup[] lookups = getLookupState(reader, true);
         List<LeafReaderContext> leaves = reader.leaves();
         // iterate in default order, the segments should be sorted by DataStream#TIMESERIES_LEAF_READERS_SORTER

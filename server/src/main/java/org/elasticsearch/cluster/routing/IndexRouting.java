@@ -356,7 +356,10 @@ public abstract class IndexRouting {
 
         @Override
         public int updateShard(String id, @Nullable String routing) {
-            throw new IllegalArgumentException(error("update"));
+            checkNoRouting(routing);
+            int shardId = idToHash(id);
+            return (rerouteWritesIfResharding(shardId));
+            // throw new IllegalArgumentException(error("update"));
         }
 
         @Override

@@ -10,6 +10,8 @@
 package org.elasticsearch.index.codec;
 
 import org.apache.lucene.codecs.DocValuesFormat;
+import org.apache.lucene.codecs.FieldsConsumer;
+import org.apache.lucene.codecs.FieldsProducer;
 import org.apache.lucene.codecs.KnnVectorsFormat;
 import org.apache.lucene.codecs.PostingsFormat;
 import org.apache.lucene.codecs.StoredFieldsFormat;
@@ -19,8 +21,12 @@ import org.apache.lucene.codecs.lucene90.Lucene90DocValuesFormat;
 import org.apache.lucene.codecs.lucene99.Lucene99HnswVectorsFormat;
 import org.apache.lucene.codecs.perfield.PerFieldKnnVectorsFormat;
 import org.apache.lucene.codecs.perfield.PerFieldPostingsFormat;
+import org.apache.lucene.index.SegmentReadState;
+import org.apache.lucene.index.SegmentWriteState;
 import org.elasticsearch.index.codec.perfield.XPerFieldDocValuesFormat;
 import org.elasticsearch.index.codec.zstd.Zstd814StoredFieldsFormat;
+
+import java.io.IOException;
 
 /**
  * Elasticsearch codec as of 9.2 relying on Lucene 10.3. This extends the Lucene 10.3 codec to compressed
