@@ -36,7 +36,7 @@ public class SyntheticIdTerms extends Terms {
 
     @Override
     public int getDocCount() throws IOException {
-        return maxDocs; // All docs have a synthetic id
+        return maxDocs - 1; // All docs have a synthetic id
     }
 
     @Override

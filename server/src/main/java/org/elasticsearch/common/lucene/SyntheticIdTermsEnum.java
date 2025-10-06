@@ -131,12 +131,13 @@ public class SyntheticIdTermsEnum extends BaseTermsEnum {
 
     @Override
     public int docFreq() {
-        throw unsupportedException();
+        ensurePositioned();
+        return 1; // This is not true, but that makes search working
     }
 
     @Override
     public long totalTermFreq() {
-        throw unsupportedException();
+        return 1L; // This is not true, but that makes search working
     }
 
     @Override
@@ -190,6 +191,8 @@ public class SyntheticIdTermsEnum extends BaseTermsEnum {
 
             // We should always have a valid _tsid ordinal but just in case
             if (found) {
+                final SyntheticDocIdSetIterator syntheticDocIds;
+
                 // Reduce the doc iterator to only have docs matching the timestamp
                 boolean hasExactTimestamp = false;
                 if (timestamp != null) {
@@ -207,7 +210,7 @@ public class SyntheticIdTermsEnum extends BaseTermsEnum {
                             }
                         }
                     }
-                    return new SyntheticDocIdSetIterator(
+                    syntheticDocIds = new SyntheticDocIdSetIterator(
                         tsIds,
                         timestamps,
                         tsIdOrdinal,
@@ -215,15 +218,19 @@ public class SyntheticIdTermsEnum extends BaseTermsEnum {
                         hasExactTimestamp ? DocIdSetIterator.range(startDoc, endDoc) : DocIdSetIterator.empty(),
                         hasExactTimestamp ? timestamp : null
                     );
+                } else {
+                    syntheticDocIds = new SyntheticDocIdSetIterator(
+                        tsIds,
+                        timestamps,
+                        tsIdOrdinal,
+                        tsIdTerm,
+                        DocIdSetIterator.range(startDoc, endDoc),
+                        hasExactTimestamp ? timestamp : null
+                    );
                 }
-                return new SyntheticDocIdSetIterator(
-                    tsIds,
-                    timestamps,
-                    tsIdOrdinal,
-                    tsIdTerm,
-                    DocIdSetIterator.range(startDoc, endDoc),
-                    hasExactTimestamp ? timestamp : null
-                );
+                // Assume iterator is positioned
+                syntheticDocIds.nextDoc();
+                return syntheticDocIds;
             }
         }
 
@@ -317,6 +324,7 @@ public class SyntheticIdTermsEnum extends BaseTermsEnum {
     private static class SyntheticIdPostingsEnum extends PostingsEnum {
 
         private final SyntheticDocIdSetIterator delegate;
+        private boolean positioned = false;
 
         private SyntheticIdPostingsEnum(SyntheticDocIdSetIterator delegate) {
             this.delegate = delegate;
@@ -329,6 +337,12 @@ public class SyntheticIdTermsEnum extends BaseTermsEnum {
 
         @Override
         public int nextDoc() throws IOException {
+            if (positioned == false) {
+                positioned = true;
+                if (delegate.docID() >= 0) {
+                    return delegate.docID();
+                }
+            }
             return delegate.nextDoc();
         }
 
