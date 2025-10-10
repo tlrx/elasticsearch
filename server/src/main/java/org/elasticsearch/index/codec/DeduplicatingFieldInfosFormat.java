@@ -19,9 +19,14 @@ import org.elasticsearch.common.util.Maps;
 import org.elasticsearch.common.util.StringLiteralDeduplicator;
 import org.elasticsearch.common.util.concurrent.ConcurrentCollections;
 import org.elasticsearch.index.mapper.FieldMapper;
+import org.elasticsearch.index.mapper.IdFieldMapper;
 
 import java.io.IOException;
+import java.util.HashMap;
 import java.util.Map;
+
+import static org.apache.lucene.codecs.perfield.PerFieldPostingsFormat.PER_FIELD_FORMAT_KEY;
+import static org.apache.lucene.codecs.perfield.PerFieldPostingsFormat.PER_FIELD_SUFFIX_KEY;
 
 /**
  * Wrapper around a {@link FieldInfosFormat} that will deduplicate and intern all field names, attribute-keys and -values, and in most
@@ -46,6 +51,19 @@ public final class DeduplicatingFieldInfosFormat extends FieldInfosFormat {
         final FieldInfo[] deduplicated = new FieldInfo[fieldInfos.size()];
         int i = 0;
         for (FieldInfo fi : fieldInfos) {
+            var attributes = fi.attributes();
+            if (IdFieldMapper.NAME.equals(fi.getName())) {
+                if (attributes.containsKey(PER_FIELD_FORMAT_KEY) == false) {
+                    assert  attributes.containsKey(PER_FIELD_SUFFIX_KEY) == false;
+                    if (segmentInfo.getCodec() instanceof PerFieldMapperCodec codec) {
+                        var postingsFormat = codec.getPostingsFormatForField(IdFieldMapper.NAME);
+
+                        attributes = new HashMap<>(attributes);
+                        attributes.put(PER_FIELD_FORMAT_KEY, postingsFormat.getName());
+                        attributes.put(PER_FIELD_SUFFIX_KEY, Integer.toString(0));
+                    }
+                }
+            }
             deduplicated[i++] = new FieldInfo(
                 FieldMapper.internFieldName(fi.getName()),
                 fi.number,
@@ -56,7 +74,7 @@ public final class DeduplicatingFieldInfosFormat extends FieldInfosFormat {
                 fi.getDocValuesType(),
                 fi.docValuesSkipIndexType(),
                 fi.getDocValuesGen(),
-                internStringStringMap(fi.attributes()),
+                internStringStringMap(attributes),
                 fi.getPointDimensionCount(),
                 fi.getPointIndexDimensionCount(),
                 fi.getPointNumBytes(),

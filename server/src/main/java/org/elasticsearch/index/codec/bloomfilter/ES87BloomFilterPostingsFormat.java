@@ -31,6 +31,7 @@ import org.apache.lucene.index.Fields;
 import org.apache.lucene.index.FilterLeafReader;
 import org.apache.lucene.index.ImpactsEnum;
 import org.apache.lucene.index.IndexFileNames;
+import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.PostingsEnum;
 import org.apache.lucene.index.SegmentInfo;
 import org.apache.lucene.index.SegmentReadState;
@@ -46,7 +47,6 @@ import org.apache.lucene.util.AttributeSource;
 import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.lucene.SyntheticIdFieldsProducer;
-import org.elasticsearch.common.lucene.SyntheticIdTerms;
 import org.elasticsearch.common.lucene.store.IndexOutputOutputStream;
 import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.common.util.ByteArray;
@@ -119,7 +119,11 @@ public class ES87BloomFilterPostingsFormat extends PostingsFormat {
             assert postingsFormats == null;
             // This method can be called on a ES87BloomFilterPostingsFormat initialized with the default constructor,
             // but not fieldsConsumer(SegmentWriteState)? We can't pass the useSyntheticId correctly.
-            return new FieldsReader(state, true);
+            try {
+                return new FieldsReader(state, true);
+            } catch (Exception e) {
+                return new FieldsReader(state);
+            }
         }
         return new FieldsReader(state, useSyntheticId);
     }
@@ -182,9 +186,6 @@ public class ES87BloomFilterPostingsFormat extends PostingsFormat {
                     fieldsGroups.add(group);
                 }
                 group.fields.add(field);
-            }
-            if (useSyntheticId) {
-                return; // Do not write postings on disk when synthetic ids are used
             }
             for (FieldsGroup group : currentGroups.values()) {
                 final FieldsConsumer writer = group.postingsFormat.fieldsConsumer(new SegmentWriteState(state, group.suffix));
@@ -373,6 +374,31 @@ public class ES87BloomFilterPostingsFormat extends PostingsFormat {
                     assert readerMap.size() == 1 : readerMap;
                     assert readerMap.containsKey(IdFieldMapper.NAME);
                     assert bloomFilters.containsKey(IdFieldMapper.NAME);
+                }
+                success = true;
+            } finally {
+                if (success == false) {
+                    IOUtils.closeWhileHandlingException(toCloses);
+                }
+            }
+        }
+
+        FieldsReader(SegmentReadState state) throws IOException {
+            this.useSyntheticId = true;
+            this.indexIn = null;
+            this.bloomFilters = Map.of();
+            boolean success = false;
+            try {
+                for (var fieldInfo : state.fieldInfos) {
+                    if (IdFieldMapper.NAME.equals(fieldInfo.getName())
+                        && fieldInfo.hasNorms() == false
+                        && fieldInfo.getIndexOptions() == IndexOptions.DOCS) {
+
+                        var reader = syntheticIdFieldsProducer(new SegmentReadState(state, state.segmentSuffix));
+                        toCloses.add(reader);
+                        readerMap.put(fieldInfo.getName(), reader);
+                        break;
+                    }
                 }
                 success = true;
             } finally {

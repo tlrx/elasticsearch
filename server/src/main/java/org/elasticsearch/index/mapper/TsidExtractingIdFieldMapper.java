@@ -9,6 +9,8 @@
 
 package org.elasticsearch.index.mapper;
 
+import org.apache.lucene.analysis.Analyzer;
+import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.FieldType;
 import org.apache.lucene.document.StringField;
@@ -131,7 +133,7 @@ public class TsidExtractingIdFieldMapper extends IdFieldMapper {
             // Postings are not written to disk, they are skipped in:
             // org.elasticsearch.index.codec.bloomfilter.ES87BloomFilterPostingsFormat.FieldsWriter.write
             fieldType.setIndexOptions(IndexOptions.DOCS);
-            fieldType.setOmitNorms(false);
+            fieldType.setOmitNorms(true);
             fieldType.setTokenized(false);
             fieldType.setStored(false);
             FIELD_TYPE = fieldType;
@@ -140,7 +142,19 @@ public class TsidExtractingIdFieldMapper extends IdFieldMapper {
         protected SyntheticIdField(BytesRef syntheticId) {
             super(NAME, syntheticId, FIELD_TYPE);
         }
+
+        @Override
+        public TokenStream tokenStream(Analyzer analyzer, TokenStream reuse) {
+            return EMPTY;
+        }
     }
+
+    private static final TokenStream EMPTY = new TokenStream() {
+        @Override
+        public boolean incrementToken() throws IOException {
+            return false;
+        }
+    };
 
     public static String createSyntheticId(BytesRef tsid, long timestamp) {
         byte[] syntheticId = new byte[Long.BYTES + tsid.length];
