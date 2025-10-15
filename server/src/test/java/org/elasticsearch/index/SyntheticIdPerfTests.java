@@ -65,8 +65,11 @@ public class SyntheticIdPerfTests extends ESTestCase {
     private static final long BASE_TIMESTAMP = 1704067200000L;
 
     public void testPerf() throws Exception {
-        final boolean useSyntheticId = true;
+        final boolean useSyntheticId = false;
         logger.info("indexing with synthetic id [" + useSyntheticId + ']');
+
+        final boolean indexIdField = false; // unused when useSyntheticId is true
+        logger.info("indexing _id field is [" + indexIdField + ']');
 
         var index = new Index("index", "_na_");
         var shardId = new ShardId(index, 0);
@@ -148,12 +151,12 @@ public class SyntheticIdPerfTests extends ESTestCase {
             }
 
             try (var indexWriter = new IndexWriter(directory, indexWriterConfig)) {
-                executeIndexing(indexWriter, useSyntheticId);
+                executeIndexing(indexWriter, useSyntheticId, indexIdField);
             }
         }
     }
 
-    private void executeIndexing(final IndexWriter indexWriter, boolean useSyntheticId) throws Exception {
+    private void executeIndexing(final IndexWriter indexWriter, boolean useSyntheticId, boolean indexIdField) throws Exception {
         var startDate = Instant.ofEpochMilli(BASE_TIMESTAMP);
         var totalNumberOfHours = 24 * 10;
         var endDate = startDate.plus(totalNumberOfHours, HOURS);
@@ -170,6 +173,7 @@ public class SyntheticIdPerfTests extends ESTestCase {
                         String.valueOf(i),
                         indexWriter,
                         useSyntheticId,
+                        indexIdField,
                         indexTimeMetric,
                         startDate,
                         endDate,
@@ -204,6 +208,7 @@ public class SyntheticIdPerfTests extends ESTestCase {
         private final String id;
         private final IndexWriter indexWriter;
         private final boolean useSyntheticId;
+        private final boolean indexIdField;
         private final MeanMetric metric;
         private final Instant endDate;
         private final long intervalInSeconds;
@@ -215,6 +220,7 @@ public class SyntheticIdPerfTests extends ESTestCase {
             String id,
             IndexWriter indexWriter,
             boolean useSyntheticId,
+            boolean indexIdField,
             MeanMetric metric,
             Instant startDate,
             Instant endDate,
@@ -225,6 +231,7 @@ public class SyntheticIdPerfTests extends ESTestCase {
             this.id = id;
             this.indexWriter = indexWriter;
             this.useSyntheticId = useSyntheticId;
+            this.indexIdField = indexIdField;
             this.metric = metric;
             this.endDate = endDate;
             this.currentTime = startDate;
@@ -255,7 +262,7 @@ public class SyntheticIdPerfTests extends ESTestCase {
                                 BytesRef uidEncoded = Uid.encodeId(id);
 
                                 doc.add(syntheticIdField(uidEncoded));
-                            } else {
+                            } else if (indexIdField) {
                                 byte[] suffix = new byte[16];
                                 var id = TsidExtractingIdFieldMapper.createId(false, routingBuilder, tsid, timestamp, suffix);
                                 BytesRef uidEncoded = Uid.encodeId(id);
