@@ -145,16 +145,17 @@ public class TsidExtractingIdFieldMapper extends IdFieldMapper {
 
         @Override
         public TokenStream tokenStream(Analyzer analyzer, TokenStream reuse) {
-            return EMPTY;
+            if (reuse == null) {
+                return new TokenStream() {
+                    @Override
+                    public boolean incrementToken() {
+                        return false;
+                    }
+                };
+            }
+            return reuse;
         }
     }
-
-    private static final TokenStream EMPTY = new TokenStream() {
-        @Override
-        public boolean incrementToken() throws IOException {
-            return false;
-        }
-    };
 
     public static String createSyntheticId(BytesRef tsid, long timestamp) {
         byte[] syntheticId = new byte[Long.BYTES + tsid.length];

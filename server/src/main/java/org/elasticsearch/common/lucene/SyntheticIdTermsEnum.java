@@ -32,7 +32,7 @@ public class SyntheticIdTermsEnum extends BaseTermsEnum {
 
     private SyntheticDocIdSetIterator iterator;
 
-    public SyntheticIdTermsEnum(SortedDocValues  tsIdsDocValues, SortedNumericDocValues timestampsDocValues) throws IOException {
+    public SyntheticIdTermsEnum(SortedDocValues tsIdsDocValues, SortedNumericDocValues timestampsDocValues) throws IOException {
         this.tsIds = Objects.requireNonNull(tsIdsDocValues);
         this.timestamps = Objects.requireNonNull(timestampsDocValues);
         this.iterator = createEmptyIterator();

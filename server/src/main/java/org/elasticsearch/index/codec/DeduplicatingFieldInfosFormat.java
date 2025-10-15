@@ -54,7 +54,7 @@ public final class DeduplicatingFieldInfosFormat extends FieldInfosFormat {
             var attributes = fi.attributes();
             if (IdFieldMapper.NAME.equals(fi.getName())) {
                 if (attributes.containsKey(PER_FIELD_FORMAT_KEY) == false) {
-                    assert  attributes.containsKey(PER_FIELD_SUFFIX_KEY) == false;
+                    assert attributes.containsKey(PER_FIELD_SUFFIX_KEY) == false;
                     if (segmentInfo.getCodec() instanceof PerFieldMapperCodec codec) {
                         var postingsFormat = codec.getPostingsFormatForField(IdFieldMapper.NAME);
 

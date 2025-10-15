@@ -52,8 +52,7 @@ public class SyntheticIdFieldsProducer extends FieldsProducer {
     }
 
     @Override
-    public void checkIntegrity() throws IOException {
-    }
+    public void checkIntegrity() throws IOException {}
 
     @Override
     public int size() {
