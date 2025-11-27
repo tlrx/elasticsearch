@@ -40,6 +40,7 @@ import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.common.util.ByteArray;
 import org.elasticsearch.core.IOUtils;
 import org.elasticsearch.core.Nullable;
+import org.elasticsearch.index.codec.tsdb.TSDBSyntheticIdStoredFieldsReader;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -542,8 +543,19 @@ public class ES93BloomFilterStoredFieldsFormat extends StoredFieldsFormat {
         @Nullable
         private final BloomFilterFieldReader bloomFilterFieldReader;
 
+        private final TSDBSyntheticIdStoredFieldsReader syntheticIdStoredFieldsReader;
+
         Reader(Directory directory, SegmentInfo si, FieldInfos fn, IOContext context) throws IOException {
             bloomFilterFieldReader = BloomFilterFieldReader.open(directory, si, fn, context);
+            boolean success = false;
+            try {
+                this.syntheticIdStoredFieldsReader = TSDBSyntheticIdStoredFieldsReader.open(directory, si, fn, context);
+                success = true;
+            } finally {
+                if (success == false) {
+                    IOUtils.closeWhileHandlingException(bloomFilterFieldReader);
+                }
+            }
         }
 
         @Override
@@ -565,7 +577,7 @@ public class ES93BloomFilterStoredFieldsFormat extends StoredFieldsFormat {
 
         @Override
         public void document(int docID, StoredFieldVisitor visitor) throws IOException {
-            // TODO: read synthetic _id from doc values
+            syntheticIdStoredFieldsReader.document(docID, visitor);
         }
 
         @Override
