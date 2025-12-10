@@ -81,12 +81,12 @@ public class ES93BloomFilterStoredFieldsFormat extends StoredFieldsFormat {
 
     // We use prime numbers with the Kirsch-Mitzenmacher technique to obtain multiple hashes from two hash functions
     private static final int[] PRIMES = new int[] { 2, 5, 11, 17, 23, 29, 41, 47, 53, 59, 71 };
-    private static final int DEFAULT_NUM_HASH_FUNCTIONS = 7;
+    private static final int DEFAULT_NUM_HASH_FUNCTIONS = 4;
     private static final byte BLOOM_FILTER_STORED = 1;
     private static final byte BLOOM_FILTER_NOT_STORED = 0;
     private static final ByteSizeValue MAX_BLOOM_FILTER_SIZE = ByteSizeValue.ofMb(8);
     private static final String DEFAULT_SEGMENT_SUFFIX = "";
-    public static final ByteSizeValue DEFAULT_BLOOM_FILTER_SIZE = ByteSizeValue.ofKb(2);
+    public static final ByteSizeValue DEFAULT_BLOOM_FILTER_SIZE = ByteSizeValue.ofKb(512);
 
     private final BigArrays bigArrays;
     private final String bloomFilterFieldName;
@@ -437,7 +437,7 @@ public class ES93BloomFilterStoredFieldsFormat extends StoredFieldsFormat {
                 this.fieldInfo = fieldInfo;
                 this.bitsetSizeInBits = bitsetSizeInBits;
                 this.bitSetSizeInBytes = bitsetSizeInBits / Byte.SIZE;
-                this.buffer = bigArrays.newByteArray(bitSetSizeInBytes, false);
+                this.buffer = bigArrays.newByteArray(bitSetSizeInBytes);
                 this.hashes = new int[numHashFunctions];
                 this.bloomFilterDataOut = directory.createOutput(bloomFilterFileName(segmentInfo), context);
 
@@ -644,7 +644,7 @@ public class ES93BloomFilterStoredFieldsFormat extends StoredFieldsFormat {
                         bloomFilterData
                     );
                 }
-                CodecUtil.checksumEntireFile(bloomFilterData);
+                CodecUtil.retrieveChecksum(bloomFilterData);
 
                 var bloomFilterFieldReader = new BloomFilterFieldReader(
                     bloomFilterMetadata.fieldInfo(),
