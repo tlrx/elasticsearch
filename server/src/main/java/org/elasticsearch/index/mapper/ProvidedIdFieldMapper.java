@@ -203,7 +203,7 @@ public class ProvidedIdFieldMapper extends IdFieldMapper {
             throw new IllegalStateException("_id should have been set on the coordinating node");
         }
         context.id(context.sourceToParse().id());
-        context.doc().add(standardIdField(context.id()));
+        //context.doc().add(standardIdField(context.id()));
     }
 
     @Override

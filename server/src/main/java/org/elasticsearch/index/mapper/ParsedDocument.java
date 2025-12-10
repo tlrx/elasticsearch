@@ -121,7 +121,7 @@ public class ParsedDocument {
 
         } else {
             // Use standard _id field (indexed and stored, some indices also trim the stored field at some point)
-            document.add(IdFieldMapper.standardIdField(id));
+            //document.add(IdFieldMapper.standardIdField(id));
         }
         return new ParsedDocument(
             versionField,

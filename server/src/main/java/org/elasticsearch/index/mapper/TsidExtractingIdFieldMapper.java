@@ -106,7 +106,7 @@ public class TsidExtractingIdFieldMapper extends IdFieldMapper {
         assert NAME.equals(idField.name()) : idField.name();
         assert idField.binaryValue() != null;
 
-        context.doc().add(idField);
+        //context.doc().add(idField);
         return idField.binaryValue();
     }
 
