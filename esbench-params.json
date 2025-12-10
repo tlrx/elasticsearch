@@ -1,0 +1,29 @@
+{
+  "elasticsearch.remote.repo.url":"https://github.com/fcofdez/elasticsearch",
+  "elasticsearch.remote.repo.revision":"synthetic-id-experiment",
+  "elasticsearch.instance.name": "gcp::n2_custom-16-68-2x375GiB_nvme_local",
+  "loaddriver.instance.name": "gcp::n2_custom-8_IntelIceLake-34-1x375GiB_nvme_local",
+  "kibana.node.count": 0,
+  "elasticsearch.node.count": 1,
+  "elasticsearch.cgroup.cpu_cores": 12,
+  "elasticsearch.cgroup.mem_limit": 12,
+  "elasticsearch.heap.size": "6g",
+  "elasticsearch.preserve_install": true,
+  "stats.telemetry": [
+    "disk-usage-stats"
+  ],
+  "async_profiler.autocollect": true,
+  "client.options": {
+    "default": {
+      "timeout": null
+    }
+  },
+  "track.name": "tsdb-metricsgen",
+  "track.challenge": "index-and-search-then-force-merge",
+  "track.repository": "internal",
+  "track.revision": "tsdb-metricgen-templates",
+  "track.params": {
+    "scenario": "v1.0.2-hostmetrics_8clientsort-270m",
+    "number_of_shards": 3
+  }
+}
