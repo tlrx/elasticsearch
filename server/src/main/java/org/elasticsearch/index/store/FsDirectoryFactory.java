@@ -160,6 +160,9 @@ public class FsDirectoryFactory implements IndexStorePlugin.DirectoryFactory {
             if (name.endsWith(".cfs")) {
                 return Optional.of(ReadAdvice.NORMAL);
             }
+            if (name.endsWith(".sfbf")) {
+                return Optional.of(ReadAdvice.RANDOM);
+            }
             return MMapDirectory.ADVISE_BY_CONTEXT.apply(name, context);
         };
     }
