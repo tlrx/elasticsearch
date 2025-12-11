@@ -40,6 +40,8 @@ import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.common.util.ByteArray;
 import org.elasticsearch.core.IOUtils;
 import org.elasticsearch.core.Nullable;
+import org.elasticsearch.logging.LogManager;
+import org.elasticsearch.logging.Logger;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -73,6 +75,9 @@ import static org.elasticsearch.index.codec.bloomfilter.BloomFilterHashFunctions
  * </ol>
  */
 public class ES93BloomFilterStoredFieldsFormat extends StoredFieldsFormat {
+
+    private static Logger checksumLog = LogManager.getLogger(ES93BloomFilterStoredFieldsFormat.class);
+
     public static final String FORMAT_NAME = "ES93BloomFilterStoredFieldsFormat";
     public static final String STORED_FIELDS_BLOOM_FILTER_EXTENSION = "sfbf";
     public static final String STORED_FIELDS_METADATA_BLOOM_FILTER_EXTENSION = "sfbfm";
@@ -644,7 +649,27 @@ public class ES93BloomFilterStoredFieldsFormat extends StoredFieldsFormat {
                         bloomFilterData
                     );
                 }
-                CodecUtil.retrieveChecksum(bloomFilterData);
+                boolean checksumEntire = checksumLog.isTraceEnabled();
+                boolean printLog = checksumLog.isDebugEnabled() || checksumEntire;
+                long startTimeInNanos = 0L;
+                if (printLog) {
+                    startTimeInNanos = System.nanoTime();
+                }
+
+                if (checksumEntire) {
+                    CodecUtil.checksumEntireFile(bloomFilterData);
+                } else {
+                    CodecUtil.retrieveChecksum(bloomFilterData);
+                }
+
+                if (printLog) {
+                    long elapsedTimeInNanos = System.nanoTime() - startTimeInNanos;
+                    if (checksumEntire) {
+                        checksumLog.debug("bloom checksum entire: {} nanos", elapsedTimeInNanos);
+                    } else {
+                        checksumLog.debug("bloom checksum: {} nanos", elapsedTimeInNanos);
+                    }
+                }
 
                 var bloomFilterFieldReader = new BloomFilterFieldReader(
                     bloomFilterMetadata.fieldInfo(),
