@@ -19,6 +19,7 @@ import org.elasticsearch.index.IndexMode;
 import org.elasticsearch.index.IndexSettings;
 import org.elasticsearch.index.IndexVersions;
 import org.elasticsearch.index.codec.bloomfilter.ES87BloomFilterPostingsFormat;
+import org.elasticsearch.index.codec.bloomfilter.ES93BloomFilterPostingsFormat;
 import org.elasticsearch.index.codec.postings.ES812PostingsFormat;
 import org.elasticsearch.index.codec.tsdb.TSDBSyntheticIdPostingsFormat;
 import org.elasticsearch.index.codec.tsdb.es819.ES819TSDBDocValuesFormat;
@@ -75,12 +76,14 @@ public class PerFieldFormatSupplier {
 
     private final PostingsFormat defaultPostingsFormat;
     private final TSDBSyntheticIdPostingsFormat syntheticIdPostingsFormat;
+    private final ES93BloomFilterPostingsFormat es93BloomFilterPostingsFormat;
 
     public PerFieldFormatSupplier(MapperService mapperService, BigArrays bigArrays) {
         this.mapperService = mapperService;
         this.bloomFilterPostingsFormat = new ES87BloomFilterPostingsFormat(bigArrays, this::internalGetPostingsFormatForField);
         this.defaultPostingsFormat = getDefaultPostingsFormat(mapperService);
         this.syntheticIdPostingsFormat = new TSDBSyntheticIdPostingsFormat();
+        this.es93BloomFilterPostingsFormat = new ES93BloomFilterPostingsFormat(bigArrays);
     }
 
     private static PostingsFormat getDefaultPostingsFormat(final MapperService mapperService) {
@@ -103,7 +106,7 @@ public class PerFieldFormatSupplier {
             // This gets called during merges where the segment merger
             // instead of relying on the field format name attribute,
             // it delegates that decision to the codec.
-            return syntheticIdPostingsFormat;
+            return es93BloomFilterPostingsFormat;
         }
         if (useBloomFilter(field)) {
             return bloomFilterPostingsFormat;

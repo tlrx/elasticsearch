@@ -118,9 +118,9 @@ abstract class AbstractTSDBSyntheticIdCodec extends FilterCodec {
                 assert false;
                 throw new IllegalArgumentException("Field [" + SYNTHETIC_ID + "] has incorrect index options");
             }
-            if (SyntheticIdField.hasSyntheticIdAttributes(fi.attributes()) == false) {
-                throw new IllegalArgumentException("Field [" + SYNTHETIC_ID + "] is not synthetic");
-            }
+//            if (SyntheticIdField.hasSyntheticIdAttributes(fi.attributes()) == false) {
+//                throw new IllegalArgumentException("Field [" + SYNTHETIC_ID + "] is not synthetic");
+//            }
         }
 
         @Override

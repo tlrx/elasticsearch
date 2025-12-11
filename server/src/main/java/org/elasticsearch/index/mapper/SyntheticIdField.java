@@ -40,8 +40,8 @@ public final class SyntheticIdField extends Field {
     static {
         TYPE = new FieldType();
         TYPE.putAttribute(ENABLED_ATTRIBUTE_KEY, ENABLED_ATTRIBUTE_VALUE);
-        TYPE.putAttribute(PerFieldPostingsFormat.PER_FIELD_FORMAT_KEY, TSDBSyntheticIdPostingsFormat.FORMAT_NAME);
-        TYPE.putAttribute(PerFieldPostingsFormat.PER_FIELD_SUFFIX_KEY, TSDBSyntheticIdPostingsFormat.SUFFIX);
+//        TYPE.putAttribute(PerFieldPostingsFormat.PER_FIELD_FORMAT_KEY, TSDBSyntheticIdPostingsFormat.FORMAT_NAME);
+//        TYPE.putAttribute(PerFieldPostingsFormat.PER_FIELD_SUFFIX_KEY, TSDBSyntheticIdPostingsFormat.SUFFIX);
 
         // Even if the field is marked as indexed, we'll just skip 99% of the
         // work to build the inverted index since we provide an empty TokenStream.
@@ -53,7 +53,7 @@ public final class SyntheticIdField extends Field {
         TYPE.setTokenized(false);
         TYPE.setOmitNorms(true);
         // The field is marked as stored, but storage on disk might be skipped
-        TYPE.setStored(true);
+        TYPE.setStored(false);
         TYPE.freeze();
     }
 
@@ -61,16 +61,16 @@ public final class SyntheticIdField extends Field {
         super(NAME, bytes, TYPE);
     }
 
-    @Override
-    public TokenStream tokenStream(Analyzer analyzer, TokenStream reuse) {
-        return EMPTY_TOKE_STREAM;
-    }
-
-    @Override
-    public void setTokenStream(TokenStream tokenStream) {
-        assert false : "this should never be called";
-        throw new UnsupportedOperationException();
-    }
+//    @Override
+//    public TokenStream tokenStream(Analyzer analyzer, TokenStream reuse) {
+//        return EMPTY_TOKE_STREAM;
+//    }
+//
+//    @Override
+//    public void setTokenStream(TokenStream tokenStream) {
+//        assert false : "this should never be called";
+//        throw new UnsupportedOperationException();
+//    }
 
     public static boolean hasSyntheticIdAttributes(Map<String, String> attributes) {
         return attributes != null
