@@ -1,5 +1,5 @@
 {
-  "elasticsearch.remote.repo.url":"https://github.com/fcofdez/elasticsearch",
+  "elasticsearch.remote.repo.url":"https://github.com/tlrx/elasticsearch",
   "elasticsearch.remote.repo.revision":"synthetic-id-experiment",
   "elasticsearch.instance.name": "gcp::n2_custom-16-68-2x375GiB_nvme_local",
   "loaddriver.instance.name": "gcp::n2_custom-8_IntelIceLake-34-1x375GiB_nvme_local",
