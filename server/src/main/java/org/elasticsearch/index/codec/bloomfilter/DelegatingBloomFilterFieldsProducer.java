@@ -16,10 +16,13 @@ import org.apache.lucene.index.TermsEnum;
 import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.core.IOUtils;
 import org.elasticsearch.index.mapper.IdFieldMapper;
+import org.elasticsearch.logging.LogManager;
+import org.elasticsearch.logging.Logger;
 
 import java.io.IOException;
 import java.util.Iterator;
 import java.util.Set;
+import java.util.concurrent.atomic.LongAdder;
 
 /**
  * A FieldsProducer that uses a Bloom filter for fast term existence checks before
@@ -30,6 +33,9 @@ public class DelegatingBloomFilterFieldsProducer extends FieldsProducer {
     private static final Set<String> FIELD_NAMES = Set.of(IdFieldMapper.NAME);
     private final FieldsProducer delegate;
     private final ES93BloomFilterPostingsFormat.BloomFilterFieldReader bloomFilter;
+    private final Logger logger = LogManager.getLogger(DelegatingBloomFilterFieldsProducer.class);
+    private final LongAdder falsePositiveCount = new LongAdder();
+    private final LongAdder totalChecks = new LongAdder();
 
     public DelegatingBloomFilterFieldsProducer(FieldsProducer delegate, ES93BloomFilterPostingsFormat.BloomFilterFieldReader bloomFilter) {
         this.delegate = delegate;
@@ -38,6 +44,9 @@ public class DelegatingBloomFilterFieldsProducer extends FieldsProducer {
 
     @Override
     public void close() throws IOException {
+        var total = totalChecks.longValue();
+        var falseP = falsePositiveCount.longValue();
+        logger.info("--> total checks: {} false positives: {}, false positive rate: {}", total, falseP, (double) falseP / total);
         IOUtils.close(delegate, bloomFilter);
     }
 
@@ -88,10 +97,15 @@ public class DelegatingBloomFilterFieldsProducer extends FieldsProducer {
 
                 @Override
                 public boolean seekExact(BytesRef text) throws IOException {
+                    totalChecks.increment();
                     if (bloomFilter.mayContainTerm(field, text) == false) {
                         return false;
                     }
-                    return getDelegate().seekExact(text);
+                    var found = getDelegate().seekExact(text);
+                    if (found == false) {
+                        falsePositiveCount.increment();
+                    }
+                    return  found;
                 }
             };
         }
