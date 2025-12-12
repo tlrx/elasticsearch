@@ -66,6 +66,7 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
     private static final byte BLOOM_FILTER_NOT_STORED = 0;
     private static final ByteSizeValue MAX_BLOOM_FILTER_SIZE = ByteSizeValue.ofMb(8);
     public static final ByteSizeValue DEFAULT_BLOOM_FILTER_SIZE = ByteSizeValue.ofKb(512);
+    private static ThreadLocal<byte[]> BUFFER = ThreadLocal.withInitial(() -> new byte[512 * 1024]);
 
     private final BigArrays bigArrays;
     private final int numHashFunctions;
@@ -106,7 +107,7 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
         private final IndexOutput bloomFilterDataOut;
         private final int bitsetSizeInBits;
         private final int bitSetSizeInBytes;
-        private final ByteArray buffer;
+        private final byte[] buffer;
         private final int[] hashes;
         private boolean closed;
 
@@ -147,8 +148,9 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
 
             this.bitsetSizeInBits = defaultBloomFilterSizeInBitsSupplier.getAsInt();
             this.bitSetSizeInBytes = bitsetSizeInBits / Byte.SIZE;
-            this.buffer = bigArrays.newByteArray(bitSetSizeInBytes);
-            toClose.add(buffer);
+            this.buffer = BUFFER.get();
+            //this.buffer = bigArrays.newByteArray(bitSetSizeInBytes);
+            //toClose.add(buffer);
         }
 
         @Override
@@ -161,8 +163,8 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
                     final int posInBitArray = hash & (bitsetSizeInBits - 1);
                     final int pos = posInBitArray >> 3; // div 8
                     final int mask = 1 << (posInBitArray & 7); // mod 8
-                    final byte val = (byte) (buffer.get(pos) | mask);
-                    buffer.set(pos, val);
+                    final byte val = (byte) (buffer[pos] | mask);
+                    buffer[pos] = val;
                 }
             }
         }
@@ -179,12 +181,12 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
                 bitsetSizeInBits,
                 numHashFunctions
             );
-
-            if (buffer.hasArray()) {
-                bloomFilterDataOut.writeBytes(buffer.array(), 0, bitSetSizeInBytes);
-            } else {
-                BytesReference.fromByteArray(buffer, bitSetSizeInBytes).writeTo(new IndexOutputOutputStream(bloomFilterDataOut));
-            }
+            bloomFilterDataOut.writeBytes(buffer, 0, bitSetSizeInBytes);
+//            if (buffer.hasArray()) {
+//                bloomFilterDataOut.writeBytes(buffer.array(), 0, bitSetSizeInBytes);
+//            } else {
+//                BytesReference.fromByteArray(buffer, bitSetSizeInBytes).writeTo(new IndexOutputOutputStream(bloomFilterDataOut));
+//            }
 
             CodecUtil.writeFooter(bloomFilterDataOut);
 
@@ -317,8 +319,8 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
                     bloomFilterData.prefetch(0, bitSetSizeInBytes);
                     for (int i = 0; i < bitSetSizeInBytes; i++) {
                         var existingBloomFilterByte = bloomFilterData.readByte(i);
-                        var resultingBloomFilterByte = buffer.get(i);
-                        buffer.set(i, (byte) (existingBloomFilterByte | resultingBloomFilterByte));
+                        var resultingBloomFilterByte = buffer[i];
+                        buffer[i] = (byte) (existingBloomFilterByte | resultingBloomFilterByte);
                     }
                 }
             }
