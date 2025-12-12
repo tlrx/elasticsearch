@@ -46,7 +46,13 @@ public class DelegatingBloomFilterFieldsProducer extends FieldsProducer {
     public void close() throws IOException {
         var total = totalChecks.longValue();
         var falseP = falsePositiveCount.longValue();
-        logger.info("--> total checks: {} false positives: {}, false positive rate: {} {}", total, falseP, (double) falseP / total, bloomFilter);
+        logger.info(
+            "--> total checks: {} false positives: {}, false positive rate: {} {}",
+            total,
+            falseP,
+            (double) falseP / total,
+            bloomFilter
+        );
         IOUtils.close(delegate, bloomFilter);
     }
 
@@ -105,7 +111,7 @@ public class DelegatingBloomFilterFieldsProducer extends FieldsProducer {
                     if (found == false) {
                         falsePositiveCount.increment();
                     }
-                    return  found;
+                    return found;
                 }
             };
         }

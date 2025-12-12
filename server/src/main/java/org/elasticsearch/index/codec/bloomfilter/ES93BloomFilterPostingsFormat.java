@@ -224,9 +224,9 @@ public class ES93BloomFilterPostingsFormat extends PostingsFormat {
             if (mergeState.fieldsProducers.length == 0) {
                 return;
             }
-//            assert mergeState.fieldsProducers[0] instanceof Reader;
-//            Reader firstReader = (Reader) mergeState.fieldsProducers[0];
-//            assert firstReader.bloomFilterFieldReader != null;
+            // assert mergeState.fieldsProducers[0] instanceof Reader;
+            // Reader firstReader = (Reader) mergeState.fieldsProducers[0];
+            // assert firstReader.bloomFilterFieldReader != null;
 
             mergeBloomFiltersWithOr(mergeState);
         }
@@ -446,7 +446,7 @@ public class ES93BloomFilterPostingsFormat extends PostingsFormat {
         }
 
         public boolean mayContainTerm(String field, BytesRef term) throws IOException {
-            //assert fieldInfo.getName().equals(field);
+            // assert fieldInfo.getName().equals(field);
 
             var termHashes = hashTerm(term, hashes);
 
@@ -475,7 +475,8 @@ public class ES93BloomFilterPostingsFormat extends PostingsFormat {
             bloomFilterData.close();
         }
 
-        @Override public String toString() {
+        @Override
+        public String toString() {
             return bloomFilterData.toString();
         }
     }

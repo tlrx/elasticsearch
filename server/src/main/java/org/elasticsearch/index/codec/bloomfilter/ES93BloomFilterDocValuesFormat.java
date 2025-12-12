@@ -42,7 +42,6 @@ import org.elasticsearch.common.util.ByteArray;
 import org.elasticsearch.core.IOUtils;
 import org.elasticsearch.core.Nullable;
 import org.elasticsearch.index.codec.FilterDocValuesProducer;
-import org.elasticsearch.index.codec.perfield.XPerFieldDocValuesFormat;
 import org.elasticsearch.index.mapper.IdFieldMapper;
 
 import java.io.Closeable;
@@ -66,7 +65,7 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
     private static final byte BLOOM_FILTER_STORED = 1;
     private static final byte BLOOM_FILTER_NOT_STORED = 0;
     private static final ByteSizeValue MAX_BLOOM_FILTER_SIZE = ByteSizeValue.ofMb(8);
-    public static final ByteSizeValue DEFAULT_BLOOM_FILTER_SIZE = ByteSizeValue.ofKb(256);
+    public static final ByteSizeValue DEFAULT_BLOOM_FILTER_SIZE = ByteSizeValue.ofKb(512);
 
     private final BigArrays bigArrays;
     private final int numHashFunctions;
@@ -88,7 +87,7 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
 
     @Override
     public DocValuesConsumer fieldsConsumer(SegmentWriteState state) throws IOException {
-        return new Writer(state, bigArrays, DEFAULT_NUM_HASH_FUNCTIONS, () -> bloomFilterSizeInBits, IdFieldMapper.NAME);
+        return new Writer(state, bigArrays, numHashFunctions, () -> bloomFilterSizeInBits, IdFieldMapper.NAME);
     }
 
     @Override
@@ -585,7 +584,7 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
 
         @Override
         public void checkIntegrity() throws IOException {
-            bloomFilterFieldReader.close();
+            bloomFilterFieldReader.checkIntegrity();
         }
 
         @Override
@@ -780,8 +779,6 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
             return new BloomFilterMetadata(fileOffset, bloomFilterSizeInBits, numOfHashFunctions);
         }
     }
-
-
 
     private static int[] hashTerm(BytesRef value, int[] outputs) {
         long hash64 = hash64(value.bytes, value.offset, value.length);

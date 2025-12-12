@@ -341,7 +341,7 @@ final class IndexDiskUsageAnalyzer {
                 return new BlockTermState(blockTermState.docStartFP, blockTermState.posStartFP, blockTermState.payStartFP);
             }
             return null;
-            //assert false : "unsupported postings format: " + termState;
+            // assert false : "unsupported postings format: " + termState;
         }
         return null;
     }

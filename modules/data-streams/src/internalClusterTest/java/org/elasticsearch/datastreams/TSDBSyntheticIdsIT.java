@@ -367,16 +367,16 @@ public class TSDBSyntheticIdsIT extends ESIntegTestCase {
 
         // Check that synthetic _id field have no postings on disk
         var indices = new HashSet<>(docs.values());
-//        for (var index : indices) {
-//            var diskUsage = diskUsage(index);
-//            var diskUsageIdField = AnalyzeIndexDiskUsageTestUtils.getPerFieldDiskUsage(diskUsage, IdFieldMapper.NAME);
-//            // When _id's are only used to populate the bloom filter,
-//            // IndexDiskUsageStats won't account for anything since
-//            // the bloom filter it's not exposed through the Reader API and
-//            // the analyzer expects to get documents with fields to do the
-//            // disk usage accounting.
-//            assertThat(diskUsageIdField, nullValue());
-//        }
+        // for (var index : indices) {
+        // var diskUsage = diskUsage(index);
+        // var diskUsageIdField = AnalyzeIndexDiskUsageTestUtils.getPerFieldDiskUsage(diskUsage, IdFieldMapper.NAME);
+        // // When _id's are only used to populate the bloom filter,
+        // // IndexDiskUsageStats won't account for anything since
+        // // the bloom filter it's not exposed through the Reader API and
+        // // the analyzer expects to get documents with fields to do the
+        // // disk usage accounting.
+        // assertThat(diskUsageIdField, nullValue());
+        // }
     }
 
     public void testGetFromTranslogBySyntheticId() throws Exception {

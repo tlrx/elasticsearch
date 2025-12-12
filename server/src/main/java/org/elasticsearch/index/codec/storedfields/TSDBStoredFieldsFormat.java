@@ -29,7 +29,6 @@ import org.elasticsearch.index.mapper.IdFieldMapper;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.io.Reader;
 import java.util.ArrayList;
 import java.util.List;
 
