@@ -474,6 +474,10 @@ public class ES93BloomFilterPostingsFormat extends PostingsFormat {
         public void close() throws IOException {
             bloomFilterData.close();
         }
+
+        @Override public String toString() {
+            return bloomFilterData.toString();
+        }
     }
 
     record BloomFilterMetadata(long fileOffset, int sizeInBits, int numHashFunctions) {
