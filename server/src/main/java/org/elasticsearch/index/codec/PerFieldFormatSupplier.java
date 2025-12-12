@@ -19,6 +19,7 @@ import org.elasticsearch.index.IndexMode;
 import org.elasticsearch.index.IndexSettings;
 import org.elasticsearch.index.IndexVersions;
 import org.elasticsearch.index.codec.bloomfilter.ES87BloomFilterPostingsFormat;
+import org.elasticsearch.index.codec.bloomfilter.ES93BloomFilterDocValuesFormat;
 import org.elasticsearch.index.codec.bloomfilter.ES93BloomFilterPostingsFormat;
 import org.elasticsearch.index.codec.postings.ES812PostingsFormat;
 import org.elasticsearch.index.codec.tsdb.TSDBSyntheticIdPostingsFormat;
@@ -77,6 +78,7 @@ public class PerFieldFormatSupplier {
     private final PostingsFormat defaultPostingsFormat;
     private final TSDBSyntheticIdPostingsFormat syntheticIdPostingsFormat;
     private final ES93BloomFilterPostingsFormat es93BloomFilterPostingsFormat;
+    private final ES93BloomFilterDocValuesFormat es93BloomFilterDocValuesFormat;
 
     public PerFieldFormatSupplier(MapperService mapperService, BigArrays bigArrays) {
         this.mapperService = mapperService;
@@ -84,6 +86,7 @@ public class PerFieldFormatSupplier {
         this.defaultPostingsFormat = getDefaultPostingsFormat(mapperService);
         this.syntheticIdPostingsFormat = new TSDBSyntheticIdPostingsFormat();
         this.es93BloomFilterPostingsFormat = new ES93BloomFilterPostingsFormat(bigArrays);
+        this.es93BloomFilterDocValuesFormat = new ES93BloomFilterDocValuesFormat(bigArrays);
     }
 
     private static PostingsFormat getDefaultPostingsFormat(final MapperService mapperService) {
@@ -106,7 +109,7 @@ public class PerFieldFormatSupplier {
             // This gets called during merges where the segment merger
             // instead of relying on the field format name attribute,
             // it delegates that decision to the codec.
-            return es93BloomFilterPostingsFormat;
+            return syntheticIdPostingsFormat;
         }
         if (useBloomFilter(field)) {
             return bloomFilterPostingsFormat;
@@ -161,6 +164,9 @@ public class PerFieldFormatSupplier {
     }
 
     public DocValuesFormat getDocValuesFormatForField(String field) {
+        if (useTSDBSyntheticId(field)) {
+            return es93BloomFilterDocValuesFormat;
+        }
         if (useTSDBDocValuesFormat(field)) {
             return (mapperService != null && mapperService.getIndexSettings().isUseTimeSeriesDocValuesFormatLargeBlockSize())
                 ? tsdbDocValuesFormatLargeNumericBlock

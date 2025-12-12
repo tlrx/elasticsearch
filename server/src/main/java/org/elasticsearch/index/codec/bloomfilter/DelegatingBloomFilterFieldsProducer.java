@@ -32,12 +32,12 @@ import java.util.concurrent.atomic.LongAdder;
 public class DelegatingBloomFilterFieldsProducer extends FieldsProducer {
     private static final Set<String> FIELD_NAMES = Set.of(IdFieldMapper.NAME);
     private final FieldsProducer delegate;
-    private final ES93BloomFilterPostingsFormat.BloomFilterFieldReader bloomFilter;
+    private final BloomFilter bloomFilter;
     private final Logger logger = LogManager.getLogger(DelegatingBloomFilterFieldsProducer.class);
     private final LongAdder falsePositiveCount = new LongAdder();
     private final LongAdder totalChecks = new LongAdder();
 
-    public DelegatingBloomFilterFieldsProducer(FieldsProducer delegate, ES93BloomFilterPostingsFormat.BloomFilterFieldReader bloomFilter) {
+    public DelegatingBloomFilterFieldsProducer(FieldsProducer delegate, BloomFilter bloomFilter) {
         this.delegate = delegate;
         this.bloomFilter = bloomFilter;
     }
@@ -111,7 +111,7 @@ public class DelegatingBloomFilterFieldsProducer extends FieldsProducer {
         }
 
         public ES93BloomFilterPostingsFormat.BloomFilterFieldReader getBloomFilter() {
-            return bloomFilter;
+            return null;
         }
     }
 }

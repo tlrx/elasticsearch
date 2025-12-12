@@ -9,6 +9,7 @@
 
 package org.elasticsearch.index.codec.storedfields;
 
+import org.apache.lucene.codecs.DocValuesProducer;
 import org.apache.lucene.codecs.StoredFieldsFormat;
 import org.apache.lucene.codecs.StoredFieldsReader;
 import org.apache.lucene.codecs.StoredFieldsWriter;
@@ -28,6 +29,7 @@ import org.elasticsearch.index.mapper.IdFieldMapper;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.io.Reader;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -265,13 +267,14 @@ public class TSDBStoredFieldsFormat extends StoredFieldsFormat {
 
     public static BloomFilter getBloomFilterForId(SegmentReadState state) throws IOException {
         var codec = state.segmentInfo.getCodec();
-        StoredFieldsReader storedFieldsReader = codec.storedFieldsFormat()
-            .fieldsReader(state.directory, state.segmentInfo, state.fieldInfos, state.context);
+        DocValuesProducer docValuesProducer = codec.docValuesFormat().fieldsProducer(new SegmentReadState(state, ""));
+        var fieldInfo = state.fieldInfos.fieldInfo(IdFieldMapper.NAME);
+        var binaryReader = docValuesProducer.getBinary(fieldInfo);
 
-        if (storedFieldsReader instanceof BloomFilter bloomFilter) {
+        if (binaryReader instanceof BloomFilter bloomFilter) {
             return bloomFilter;
         } else {
-            storedFieldsReader.close();
+            docValuesProducer.close();
             return BloomFilter.NO_FILTER;
         }
     }
