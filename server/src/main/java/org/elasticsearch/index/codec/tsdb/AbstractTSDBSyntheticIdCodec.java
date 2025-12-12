@@ -51,25 +51,11 @@ import static org.elasticsearch.index.codec.tsdb.TSDBSyntheticIdPostingsFormat.T
  * @see TSDBStoredFieldsFormat
  */
 abstract class AbstractTSDBSyntheticIdCodec extends FilterCodec {
-    private final TSDBStoredFieldsFormat storedFieldsFormat;
     private final ValidatingFieldInfosFormat fieldInfosFormat;
 
     AbstractTSDBSyntheticIdCodec(String name, Codec delegate, BigArrays bigArrays) {
         super(name, delegate);
-        this.storedFieldsFormat = new TSDBStoredFieldsFormat(
-            delegate.storedFieldsFormat(),
-            new ES93BloomFilterStoredFieldsFormat(
-                bigArrays,
-                ES93BloomFilterStoredFieldsFormat.DEFAULT_BLOOM_FILTER_SIZE,
-                IdFieldMapper.NAME
-            )
-        );
         this.fieldInfosFormat = new ValidatingFieldInfosFormat(delegate.fieldInfosFormat());
-    }
-
-    @Override
-    public StoredFieldsFormat storedFieldsFormat() {
-        return storedFieldsFormat;
     }
 
     @Override
