@@ -29,9 +29,9 @@ import java.util.Set;
 public class DelegatingBloomFilterFieldsProducer extends FieldsProducer {
     private static final Set<String> FIELD_NAMES = Set.of(IdFieldMapper.NAME);
     private final FieldsProducer delegate;
-    private final BloomFilter bloomFilter;
+    private final ES93BloomFilterPostingsFormat.BloomFilterFieldReader bloomFilter;
 
-    public DelegatingBloomFilterFieldsProducer(FieldsProducer delegate, BloomFilter bloomFilter) {
+    public DelegatingBloomFilterFieldsProducer(FieldsProducer delegate, ES93BloomFilterPostingsFormat.BloomFilterFieldReader bloomFilter) {
         this.delegate = delegate;
         this.bloomFilter = bloomFilter;
     }
@@ -55,34 +55,49 @@ public class DelegatingBloomFilterFieldsProducer extends FieldsProducer {
     public Terms terms(String field) throws IOException {
         assert FIELD_NAMES.contains(field) : "Expected one of " + FIELD_NAMES + " but got " + field;
         final Terms terms = delegate.terms(field);
-        return new FilterLeafReader.FilterTerms(terms) {
-            @Override
-            public TermsEnum iterator() throws IOException {
-                return new LazyFilterTermsEnum() {
-                    private TermsEnum termsEnum;
-
-                    @Override
-                    protected TermsEnum getDelegate() throws IOException {
-                        if (termsEnum == null) {
-                            termsEnum = terms.iterator();
-                        }
-                        return termsEnum;
-                    }
-
-                    @Override
-                    public boolean seekExact(BytesRef text) throws IOException {
-                        if (bloomFilter.mayContainTerm(field, text) == false) {
-                            return false;
-                        }
-                        return getDelegate().seekExact(text);
-                    }
-                };
-            }
-        };
+        return new BloomFilterTerms(terms, field);
     }
 
     @Override
     public int size() {
         return delegate.size();
+    }
+
+    public class BloomFilterTerms extends FilterLeafReader.FilterTerms {
+        private final Terms terms;
+        private final String field;
+
+        BloomFilterTerms(Terms terms, String field) {
+            super(terms);
+            this.terms = terms;
+            this.field = field;
+        }
+
+        @Override
+        public TermsEnum iterator() throws IOException {
+            return new LazyFilterTermsEnum() {
+                private TermsEnum termsEnum;
+
+                @Override
+                protected TermsEnum getDelegate() throws IOException {
+                    if (termsEnum == null) {
+                        termsEnum = terms.iterator();
+                    }
+                    return termsEnum;
+                }
+
+                @Override
+                public boolean seekExact(BytesRef text) throws IOException {
+                    if (bloomFilter.mayContainTerm(field, text) == false) {
+                        return false;
+                    }
+                    return getDelegate().seekExact(text);
+                }
+            };
+        }
+
+        public ES93BloomFilterPostingsFormat.BloomFilterFieldReader getBloomFilter() {
+            return bloomFilter;
+        }
     }
 }

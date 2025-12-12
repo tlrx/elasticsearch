@@ -54,7 +54,7 @@ public class TSDBSyntheticIdPostingsFormat extends PostingsFormat {
             docValuesProducer = codec.docValuesFormat().fieldsProducer(new SegmentReadState(state, ""));
             var fieldsProducer = new TSDBSyntheticIdFieldsProducer(state, docValuesProducer);
             success = true;
-            return new DelegatingBloomFilterFieldsProducer(fieldsProducer, bloomFilter);
+            return new DelegatingBloomFilterFieldsProducer(fieldsProducer, null);
         } finally {
             if (success == false) {
                 IOUtils.close(docValuesProducer);

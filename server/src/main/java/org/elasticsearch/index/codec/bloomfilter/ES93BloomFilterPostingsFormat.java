@@ -108,7 +108,6 @@ public class ES93BloomFilterPostingsFormat extends PostingsFormat {
         private final ByteArray buffer;
         private final int[] hashes;
         private boolean closed;
-        private FieldInfo fieldInfo;
 
         Writer(
             SegmentWriteState state,
@@ -157,11 +156,7 @@ public class ES93BloomFilterPostingsFormat extends PostingsFormat {
             if (terms == null) {
                 throw new IllegalStateException("terms field [" + bloomFilterFieldName + "] not found");
             }
-            var fieldInfo = state.fieldInfos.fieldInfo(bloomFilterFieldName);
-            if (fieldInfo == null) {
-                throw new IllegalStateException("field info for [" + bloomFilterFieldName + "] not found");
-            }
-            this.fieldInfo = fieldInfo;
+            assert state.fieldInfos.fieldInfo(bloomFilterFieldName) != null;
 
             var termsEnum = terms.iterator();
             while (true) {
@@ -192,7 +187,6 @@ public class ES93BloomFilterPostingsFormat extends PostingsFormat {
 
         private void flush() throws IOException {
             BloomFilterMetadata bloomFilterMetadata = new BloomFilterMetadata(
-                fieldInfo,
                 bloomFilterDataOut.getFilePointer(),
                 bitsetSizeInBits,
                 numHashFunctions
@@ -232,9 +226,9 @@ public class ES93BloomFilterPostingsFormat extends PostingsFormat {
             if (mergeState.fieldsProducers.length == 0) {
                 return;
             }
-            assert mergeState.fieldsProducers[0] instanceof Reader;
-            Reader firstReader = (Reader) mergeState.fieldsProducers[0];
-            assert firstReader.bloomFilterFieldReader != null;
+//            assert mergeState.fieldsProducers[0] instanceof Reader;
+//            Reader firstReader = (Reader) mergeState.fieldsProducers[0];
+//            assert firstReader.bloomFilterFieldReader != null;
 
             mergeBloomFiltersWithOr(mergeState);
         }
@@ -256,16 +250,17 @@ public class ES93BloomFilterPostingsFormat extends PostingsFormat {
          * @return {@code true} if all segments have compatible bloom filters that can be
          *         merged via bitwise OR; {@code false} otherwise
          */
-        private boolean useOptimizedMerge(MergeState mergeState) {
+        private boolean useOptimizedMerge(MergeState mergeState) throws IOException {
             int expectedBloomFilterSize = -1;
             for (int readerIndex = 0; readerIndex < mergeState.fieldsProducers.length; readerIndex++) {
                 final FieldsProducer f = mergeState.fieldsProducers[readerIndex];
-                if (f instanceof Reader == false) {
+                var terms = f.terms(bloomFilterFieldName);
+                if (terms instanceof DelegatingBloomFilterFieldsProducer.BloomFilterTerms == false) {
                     return false;
                 }
 
-                Reader reader = (Reader) f;
-                BloomFilterFieldReader bloomFilterFieldReader = reader.bloomFilterFieldReader;
+                DelegatingBloomFilterFieldsProducer.BloomFilterTerms reader = (DelegatingBloomFilterFieldsProducer.BloomFilterTerms) terms;
+                BloomFilterFieldReader bloomFilterFieldReader = reader.getBloomFilter();
 
                 if (bloomFilterFieldReader == null) {
                     return false;
@@ -296,12 +291,13 @@ public class ES93BloomFilterPostingsFormat extends PostingsFormat {
         private void mergeBloomFiltersWithOr(MergeState mergeState) throws IOException {
             for (int readerIdx = 0; readerIdx < mergeState.fieldsProducers.length; readerIdx++) {
                 FieldsProducer fieldsProducer = mergeState.fieldsProducers[readerIdx];
-                if (fieldsProducer instanceof Reader == false) {
+                var terms = fieldsProducer.terms(bloomFilterFieldName);
+                if (terms instanceof DelegatingBloomFilterFieldsProducer.BloomFilterTerms == false) {
                     throw new IllegalStateException("Expected a Reader but got " + fieldsProducer.getClass());
                 }
 
-                Reader reader = (Reader) fieldsProducer;
-                var bloomFilterFieldReader = reader.bloomFilterFieldReader;
+                DelegatingBloomFilterFieldsProducer.BloomFilterTerms reader = (DelegatingBloomFilterFieldsProducer.BloomFilterTerms) terms;
+                BloomFilterFieldReader bloomFilterFieldReader = reader.getBloomFilter();
 
                 if (bloomFilterFieldReader != null) {
                     assert bloomFilterFieldReader.getBloomFilterBitSetSizeInBits() == bitsetSizeInBits
@@ -375,7 +371,6 @@ public class ES93BloomFilterPostingsFormat extends PostingsFormat {
     }
 
     static class BloomFilterFieldReader implements BloomFilter {
-        private final FieldInfo fieldInfo;
         private final IndexInput bloomFilterData;
         private final RandomAccessInput bloomFilterIn;
         private final int bloomFilterBitSetSizeInBits;
@@ -426,7 +421,6 @@ public class ES93BloomFilterPostingsFormat extends PostingsFormat {
                 CodecUtil.retrieveChecksum(bloomFilterData);
 
                 var bloomFilterFieldReader = new BloomFilterFieldReader(
-                    bloomFilterMetadata.fieldInfo(),
                     bloomFilterData.randomAccessSlice(bloomFilterMetadata.fileOffset(), bloomFilterMetadata.sizeInBytes()),
                     bloomFilterMetadata.sizeInBits(),
                     bloomFilterMetadata.numHashFunctions(),
@@ -442,13 +436,11 @@ public class ES93BloomFilterPostingsFormat extends PostingsFormat {
         }
 
         BloomFilterFieldReader(
-            FieldInfo fieldInfo,
             RandomAccessInput bloomFilterIn,
             int bloomFilterBitSetSizeInBits,
             int numHashFunctions,
             IndexInput bloomFilterData
         ) {
-            this.fieldInfo = Objects.requireNonNull(fieldInfo);
             this.bloomFilterIn = bloomFilterIn;
             this.bloomFilterBitSetSizeInBits = bloomFilterBitSetSizeInBits;
             this.hashes = new int[numHashFunctions];
@@ -456,7 +448,7 @@ public class ES93BloomFilterPostingsFormat extends PostingsFormat {
         }
 
         public boolean mayContainTerm(String field, BytesRef term) throws IOException {
-            assert fieldInfo.getName().equals(field);
+            //assert fieldInfo.getName().equals(field);
 
             var termHashes = hashTerm(term, hashes);
 
@@ -486,9 +478,8 @@ public class ES93BloomFilterPostingsFormat extends PostingsFormat {
         }
     }
 
-    record BloomFilterMetadata(FieldInfo fieldInfo, long fileOffset, int sizeInBits, int numHashFunctions) {
+    record BloomFilterMetadata(long fileOffset, int sizeInBits, int numHashFunctions) {
         BloomFilterMetadata {
-            assert fieldInfo != null;
             assert isPowerOfTwo(sizeInBits);
         }
 
@@ -497,18 +488,16 @@ public class ES93BloomFilterPostingsFormat extends PostingsFormat {
         }
 
         void writeTo(IndexOutput indexOut) throws IOException {
-            indexOut.writeVInt(fieldInfo.number);
             indexOut.writeVLong(fileOffset);
             indexOut.writeVInt(sizeInBits);
             indexOut.writeVInt(numHashFunctions);
         }
 
         static BloomFilterMetadata readFrom(IndexInput in, FieldInfos fieldInfos) throws IOException {
-            final var fieldInfo = fieldInfos.fieldInfo(in.readVInt());
             final long fileOffset = in.readVLong();
             final int bloomFilterSizeInBits = in.readVInt();
             final int numOfHashFunctions = in.readVInt();
-            return new BloomFilterMetadata(fieldInfo, fileOffset, bloomFilterSizeInBits, numOfHashFunctions);
+            return new BloomFilterMetadata(fileOffset, bloomFilterSizeInBits, numOfHashFunctions);
         }
     }
 
