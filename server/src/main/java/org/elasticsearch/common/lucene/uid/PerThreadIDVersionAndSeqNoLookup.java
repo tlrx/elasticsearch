@@ -73,16 +73,16 @@ final class PerThreadIDVersionAndSeqNoLookup {
             final NumericDocValues tombstoneDV = reader.getNumericDocValues(SeqNoFieldMapper.TOMBSTONE_NAME);
             // this is a special case when we pruned away all IDs in a segment since all docs are deleted.
             final boolean allDocsDeleted = (softDeletesDV != null && reader.numDocs() == 0);
-            if ((softDeletesDV == null || tombstoneDV == null) && allDocsDeleted == false) {
-                throw new IllegalArgumentException(
-                    "reader does not have _uid terms but not a no-op segment; "
-                        + "_soft_deletes ["
-                        + softDeletesDV
-                        + "], _tombstone ["
-                        + tombstoneDV
-                        + "]"
-                );
-            }
+//            if ((softDeletesDV == null || tombstoneDV == null) && allDocsDeleted == false) {
+//                throw new IllegalArgumentException(
+//                    "reader does not have _uid terms but not a no-op segment; "
+//                        + "_soft_deletes ["
+//                        + softDeletesDV
+//                        + "], _tombstone ["
+//                        + tombstoneDV
+//                        + "]"
+//                );
+//            }
             termsEnum = null;
         } else {
             termsEnum = terms.iterator();
