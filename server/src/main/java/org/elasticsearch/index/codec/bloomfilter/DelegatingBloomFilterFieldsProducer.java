@@ -103,7 +103,9 @@ public class DelegatingBloomFilterFieldsProducer extends FieldsProducer {
                     }
                     boolean found = getDelegate().seekExact(text);
                     if (found == false) {
-                        logger.info("--> false positive");
+                        var total = numDocs.sum();
+                        var falseP = falsePositives.sum();
+                        logger.info("--> total checks: {}, false positives: {}, false positive ratio {}", total, falseP, (double) falseP / total);
                         falsePositives.increment();
                     }
                     return found;
