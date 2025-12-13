@@ -9,12 +9,20 @@
 
 package org.elasticsearch.common.lucene.uid;
 
+import org.apache.lucene.codecs.DocValuesProducer;
+import org.apache.lucene.index.BinaryDocValues;
+import org.apache.lucene.index.DocValuesSkipper;
+import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.FilterLeafReader;
 import org.apache.lucene.index.ImpactsEnum;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.index.NumericDocValues;
 import org.apache.lucene.index.PostingsEnum;
+import org.apache.lucene.index.SortedDocValues;
+import org.apache.lucene.index.SortedNumericDocValues;
+import org.apache.lucene.index.SortedSetDocValues;
 import org.apache.lucene.index.TermState;
 import org.apache.lucene.index.Terms;
 import org.apache.lucene.index.TermsEnum;
@@ -25,6 +33,9 @@ import org.apache.lucene.util.IOBooleanSupplier;
 import org.elasticsearch.common.util.concurrent.ConcurrentCollections;
 import org.elasticsearch.core.Assertions;
 import org.elasticsearch.index.codec.bloomfilter.BloomFilter;
+import org.elasticsearch.index.codec.bloomfilter.DelegatingBloomFilterFieldsProducer;
+import org.elasticsearch.index.codec.tsdb.TSDBSyntheticIdFieldsProducer;
+import org.elasticsearch.index.codec.tsdb.TSDBSyntheticIdPostingsFormat;
 import org.elasticsearch.index.mapper.IdFieldMapper;
 import org.elasticsearch.index.mapper.TsidExtractingIdFieldMapper;
 
@@ -133,10 +144,66 @@ public final class VersionsAndSeqNoResolver {
         }
     }
 
+    static class DV extends DocValuesProducer {
+
+        private final LeafReader reader;
+
+        DV(LeafReader reader) {
+            this.reader = reader;
+        }
+
+        @Override
+        public NumericDocValues getNumeric(FieldInfo field) throws IOException {
+            return reader.getNumericDocValues(field.name);
+        }
+
+        @Override
+        public BinaryDocValues getBinary(FieldInfo field) throws IOException {
+            return reader.getBinaryDocValues(field.name);
+        }
+
+        @Override
+        public SortedDocValues getSorted(FieldInfo field) throws IOException {
+            return reader.getSortedDocValues(field.name);
+        }
+
+        @Override
+        public SortedNumericDocValues getSortedNumeric(FieldInfo field) throws IOException {
+            return reader.getSortedNumericDocValues(field.name);
+        }
+
+        @Override
+        public SortedSetDocValues getSortedSet(FieldInfo field) throws IOException {
+            return reader.getSortedSetDocValues(field.name);
+        }
+
+        @Override
+        public DocValuesSkipper getSkipper(FieldInfo field) throws IOException {
+
+            return reader.getDocValuesSkipper(field.name);
+        }
+
+        @Override
+        public void checkIntegrity() throws IOException {
+
+        }
+
+        @Override
+        public void close() throws IOException {}
+    }
+
     static class IDReader extends FilterLeafReader {
 
-        protected IDReader(LeafReader in) {
+        private final DelegatingBloomFilterFieldsProducer postingsFormat;
+
+        protected IDReader(LeafReader in) throws IOException {
             super(in);
+            var binaryDocValues = in.getBinaryDocValues(IdFieldMapper.NAME);
+            final BloomFilter bloomFilter = binaryDocValues instanceof BloomFilter
+                ? ((BloomFilter) binaryDocValues)
+                : BloomFilter.NO_FILTER;
+            var producer = new TSDBSyntheticIdFieldsProducer(in.getFieldInfos(), new DV(in), in.numDocs());
+            postingsFormat = new DelegatingBloomFilterFieldsProducer(producer, bloomFilter);
         }
 
         @Override
@@ -152,127 +219,7 @@ public final class VersionsAndSeqNoResolver {
         @Override
         public Terms terms(String field) throws IOException {
             if (field.equals(IdFieldMapper.NAME)) {
-                var binaryDocValues = in.getBinaryDocValues(IdFieldMapper.NAME);
-                final BloomFilter bloomFilter = binaryDocValues instanceof BloomFilter
-                    ? ((BloomFilter) binaryDocValues)
-                    : BloomFilter.NO_FILTER;
-                return new Terms() {
-                    @Override
-                    public TermsEnum iterator() throws IOException {
-                        return new TermsEnum() {
-                            @Override
-                            public AttributeSource attributes() {
-                                return null;
-                            }
-
-                            @Override
-                            public boolean seekExact(BytesRef text) throws IOException {
-                                bloomFilter.mayContainTerm(IdFieldMapper.NAME, text);
-                                return false;
-                            }
-
-                            @Override
-                            public IOBooleanSupplier prepareSeekExact(BytesRef text) throws IOException {
-                                return null;
-                            }
-
-                            @Override
-                            public SeekStatus seekCeil(BytesRef text) throws IOException {
-                                return null;
-                            }
-
-                            @Override
-                            public void seekExact(long ord) throws IOException {
-
-                            }
-
-                            @Override
-                            public void seekExact(BytesRef term, TermState state) throws IOException {
-
-                            }
-
-                            @Override
-                            public BytesRef term() throws IOException {
-                                return null;
-                            }
-
-                            @Override
-                            public long ord() throws IOException {
-                                return 0;
-                            }
-
-                            @Override
-                            public int docFreq() throws IOException {
-                                return 0;
-                            }
-
-                            @Override
-                            public long totalTermFreq() throws IOException {
-                                return 0;
-                            }
-
-                            @Override
-                            public PostingsEnum postings(PostingsEnum reuse, int flags) throws IOException {
-                                return null;
-                            }
-
-                            @Override
-                            public ImpactsEnum impacts(int flags) throws IOException {
-                                return null;
-                            }
-
-                            @Override
-                            public TermState termState() throws IOException {
-                                return null;
-                            }
-
-                            @Override
-                            public BytesRef next() throws IOException {
-                                return null;
-                            }
-                        };
-                    }
-
-                    @Override
-                    public long size() throws IOException {
-                        return 0;
-                    }
-
-                    @Override
-                    public long getSumTotalTermFreq() throws IOException {
-                        return 0;
-                    }
-
-                    @Override
-                    public long getSumDocFreq() throws IOException {
-                        return 0;
-                    }
-
-                    @Override
-                    public int getDocCount() throws IOException {
-                        return 0;
-                    }
-
-                    @Override
-                    public boolean hasFreqs() {
-                        return false;
-                    }
-
-                    @Override
-                    public boolean hasOffsets() {
-                        return false;
-                    }
-
-                    @Override
-                    public boolean hasPositions() {
-                        return false;
-                    }
-
-                    @Override
-                    public boolean hasPayloads() {
-                        return false;
-                    }
-                };
+                return postingsFormat.terms(field);
             }
             return super.terms(field);
         }
