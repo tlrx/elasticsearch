@@ -9,13 +9,23 @@
 
 package org.elasticsearch.common.lucene.uid;
 
+import org.apache.lucene.index.FilterLeafReader;
+import org.apache.lucene.index.ImpactsEnum;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.index.PostingsEnum;
+import org.apache.lucene.index.TermState;
+import org.apache.lucene.index.Terms;
+import org.apache.lucene.index.TermsEnum;
+import org.apache.lucene.util.AttributeSource;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.CloseableThreadLocal;
+import org.apache.lucene.util.IOBooleanSupplier;
 import org.elasticsearch.common.util.concurrent.ConcurrentCollections;
 import org.elasticsearch.core.Assertions;
+import org.elasticsearch.index.codec.bloomfilter.BloomFilter;
+import org.elasticsearch.index.mapper.IdFieldMapper;
 import org.elasticsearch.index.mapper.TsidExtractingIdFieldMapper;
 
 import java.io.IOException;
@@ -62,7 +72,7 @@ public final class VersionsAndSeqNoResolver {
         if (lookupState == null) {
             lookupState = new PerThreadIDVersionAndSeqNoLookup[reader.leaves().size()];
             for (LeafReaderContext leaf : reader.leaves()) {
-                lookupState[leaf.ord] = new PerThreadIDVersionAndSeqNoLookup(leaf.reader(), loadTimestampRange);
+                lookupState[leaf.ord] = new PerThreadIDVersionAndSeqNoLookup(new IDReader(leaf.reader()), loadTimestampRange);
             }
             ctl.set(lookupState);
         } else {
@@ -120,6 +130,151 @@ public final class VersionsAndSeqNoResolver {
             this.docId = docId;
             this.seqNo = seqNo;
             this.context = context;
+        }
+    }
+
+    static class IDReader extends FilterLeafReader {
+
+        protected IDReader(LeafReader in) {
+            super(in);
+        }
+
+        @Override
+        public CacheHelper getCoreCacheHelper() {
+            return in.getCoreCacheHelper();
+        }
+
+        @Override
+        public CacheHelper getReaderCacheHelper() {
+            return in.getReaderCacheHelper();
+        }
+
+        @Override
+        public Terms terms(String field) throws IOException {
+            if (field.equals(IdFieldMapper.NAME)) {
+                var binaryDocValues = in.getBinaryDocValues(IdFieldMapper.NAME);
+                final BloomFilter bloomFilter = binaryDocValues instanceof BloomFilter
+                    ? ((BloomFilter) binaryDocValues)
+                    : BloomFilter.NO_FILTER;
+                return new Terms() {
+                    @Override
+                    public TermsEnum iterator() throws IOException {
+                        return new TermsEnum() {
+                            @Override
+                            public AttributeSource attributes() {
+                                return null;
+                            }
+
+                            @Override
+                            public boolean seekExact(BytesRef text) throws IOException {
+                                bloomFilter.mayContainTerm(IdFieldMapper.NAME, text);
+                                return false;
+                            }
+
+                            @Override
+                            public IOBooleanSupplier prepareSeekExact(BytesRef text) throws IOException {
+                                return null;
+                            }
+
+                            @Override
+                            public SeekStatus seekCeil(BytesRef text) throws IOException {
+                                return null;
+                            }
+
+                            @Override
+                            public void seekExact(long ord) throws IOException {
+
+                            }
+
+                            @Override
+                            public void seekExact(BytesRef term, TermState state) throws IOException {
+
+                            }
+
+                            @Override
+                            public BytesRef term() throws IOException {
+                                return null;
+                            }
+
+                            @Override
+                            public long ord() throws IOException {
+                                return 0;
+                            }
+
+                            @Override
+                            public int docFreq() throws IOException {
+                                return 0;
+                            }
+
+                            @Override
+                            public long totalTermFreq() throws IOException {
+                                return 0;
+                            }
+
+                            @Override
+                            public PostingsEnum postings(PostingsEnum reuse, int flags) throws IOException {
+                                return null;
+                            }
+
+                            @Override
+                            public ImpactsEnum impacts(int flags) throws IOException {
+                                return null;
+                            }
+
+                            @Override
+                            public TermState termState() throws IOException {
+                                return null;
+                            }
+
+                            @Override
+                            public BytesRef next() throws IOException {
+                                return null;
+                            }
+                        };
+                    }
+
+                    @Override
+                    public long size() throws IOException {
+                        return 0;
+                    }
+
+                    @Override
+                    public long getSumTotalTermFreq() throws IOException {
+                        return 0;
+                    }
+
+                    @Override
+                    public long getSumDocFreq() throws IOException {
+                        return 0;
+                    }
+
+                    @Override
+                    public int getDocCount() throws IOException {
+                        return 0;
+                    }
+
+                    @Override
+                    public boolean hasFreqs() {
+                        return false;
+                    }
+
+                    @Override
+                    public boolean hasOffsets() {
+                        return false;
+                    }
+
+                    @Override
+                    public boolean hasPositions() {
+                        return false;
+                    }
+
+                    @Override
+                    public boolean hasPayloads() {
+                        return false;
+                    }
+                };
+            }
+            return super.terms(field);
         }
     }
 

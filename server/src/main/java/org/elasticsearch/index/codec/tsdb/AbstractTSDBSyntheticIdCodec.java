@@ -12,17 +12,12 @@ package org.elasticsearch.index.codec.tsdb;
 import org.apache.lucene.codecs.Codec;
 import org.apache.lucene.codecs.FieldInfosFormat;
 import org.apache.lucene.codecs.FilterCodec;
-import org.apache.lucene.codecs.StoredFieldsFormat;
 import org.apache.lucene.index.FieldInfos;
-import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.SegmentInfo;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.IOContext;
 import org.elasticsearch.common.util.BigArrays;
-import org.elasticsearch.index.codec.bloomfilter.ES93BloomFilterStoredFieldsFormat;
 import org.elasticsearch.index.codec.storedfields.TSDBStoredFieldsFormat;
-import org.elasticsearch.index.mapper.IdFieldMapper;
-import org.elasticsearch.index.mapper.SyntheticIdField;
 
 import java.io.IOException;
 
@@ -100,13 +95,13 @@ abstract class AbstractTSDBSyntheticIdCodec extends FilterCodec {
                 assert false : message;
                 throw new IllegalArgumentException(message);
             }
-//            if (fi.getIndexOptions() != IndexOptions.DOCS) {
-//                assert false;
-//                throw new IllegalArgumentException("Field [" + SYNTHETIC_ID + "] has incorrect index options");
-//            }
-//            if (SyntheticIdField.hasSyntheticIdAttributes(fi.attributes()) == false) {
-//                throw new IllegalArgumentException("Field [" + SYNTHETIC_ID + "] is not synthetic");
-//            }
+            // if (fi.getIndexOptions() != IndexOptions.DOCS) {
+            // assert false;
+            // throw new IllegalArgumentException("Field [" + SYNTHETIC_ID + "] has incorrect index options");
+            // }
+            // if (SyntheticIdField.hasSyntheticIdAttributes(fi.attributes()) == false) {
+            // throw new IllegalArgumentException("Field [" + SYNTHETIC_ID + "] is not synthetic");
+            // }
         }
 
         @Override

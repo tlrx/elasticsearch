@@ -16,13 +16,10 @@ import org.apache.lucene.index.TermsEnum;
 import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.core.IOUtils;
 import org.elasticsearch.index.mapper.IdFieldMapper;
-import org.elasticsearch.logging.LogManager;
-import org.elasticsearch.logging.Logger;
 
 import java.io.IOException;
 import java.util.Iterator;
 import java.util.Set;
-import java.util.concurrent.atomic.LongAdder;
 
 /**
  * A FieldsProducer that uses a Bloom filter for fast term existence checks before
@@ -91,7 +88,7 @@ public class DelegatingBloomFilterFieldsProducer extends FieldsProducer {
 
                 @Override
                 public boolean seekExact(BytesRef text) throws IOException {
-                     if (bloomFilter.mayContainTerm(field, text) == false) {
+                    if (bloomFilter.mayContainTerm(field, text) == false) {
                         return false;
                     }
                     return getDelegate().seekExact(text);
