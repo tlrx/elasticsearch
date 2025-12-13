@@ -103,6 +103,7 @@ public class DelegatingBloomFilterFieldsProducer extends FieldsProducer {
                     }
                     boolean found = getDelegate().seekExact(text);
                     if (found == false) {
+                        logger.info("--> false positive");
                         falsePositives.increment();
                     }
                     return found;
