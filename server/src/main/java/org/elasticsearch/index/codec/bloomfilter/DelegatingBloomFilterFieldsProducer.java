@@ -105,7 +105,7 @@ public class DelegatingBloomFilterFieldsProducer extends FieldsProducer {
                     if (found == false) {
                         var total = numDocs.sum();
                         var falseP = falsePositives.sum();
-                        logger.info("--> total checks: {}, false positives: {}, false positive ratio {}", total, falseP, (double) falseP / total);
+                        logger.info("--> total checks: {}, false positives: {}, false positive ratio {} {}", total, falseP, (double) falseP / total, bloomFilter);
                         falsePositives.increment();
                     }
                     return found;
