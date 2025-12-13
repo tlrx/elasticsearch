@@ -174,7 +174,7 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
         }
 
         private void flush() throws IOException {
-            ES93BloomFilterPostingsFormat.BloomFilterMetadata bloomFilterMetadata = new ES93BloomFilterPostingsFormat.BloomFilterMetadata(
+            BloomFilterMetadata bloomFilterMetadata = new BloomFilterMetadata(
                 bloomFilterDataOut.getFilePointer(),
                 bitsetSizeInBits,
                 numHashFunctions
@@ -191,7 +191,6 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
             // TODO: this is not necessary
             if (bloomFilterMetadata != null) {
                 metadataOut.writeByte(BLOOM_FILTER_STORED);
-
             } else {
                 metadataOut.writeByte(BLOOM_FILTER_NOT_STORED);
             }
@@ -640,6 +639,10 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
 
             BloomFilterFieldReader bloomFilterFieldReader() {
                 return bloomFilterFieldReader;
+            }
+
+            @Override public String toString() {
+                return bloomFilterFieldReader.toString();
             }
         }
     }
