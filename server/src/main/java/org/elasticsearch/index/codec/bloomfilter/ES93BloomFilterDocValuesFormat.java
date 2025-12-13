@@ -47,6 +47,7 @@ import org.elasticsearch.index.mapper.IdFieldMapper;
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.function.IntSupplier;
 
@@ -653,7 +654,6 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
         private final int bloomFilterBitSetSizeInBits;
         private final int[] hashes;
 
-        @Nullable
         static BloomFilterFieldReader open(SegmentReadState state) throws IOException {
             final Directory directory = state.directory;
             final SegmentInfo si = state.segmentInfo;
@@ -756,7 +756,14 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
 
         @Override
         public String toString() {
-            return bloomFilterData.toString();
+            return "BloomFilterFieldReader{"
+                + "hashes="
+                + hashes.length
+                + ", bloomFilterBitSetSizeInBits="
+                + bloomFilterBitSetSizeInBits
+                + ", bloomFilterData="
+                + bloomFilterData
+                + '}';
         }
     }
 
