@@ -653,6 +653,7 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
 
     static class BloomFilterFieldReader implements BloomFilter {
         private final IndexInput bloomFilterData;
+        private final String segmentName;
         private final RandomAccessInput bloomFilterIn;
         private final int bloomFilterBitSetSizeInBits;
         private final int[] hashes;
@@ -704,7 +705,8 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
                     bloomFilterData.randomAccessSlice(bloomFilterMetadata.fileOffset(), bloomFilterMetadata.sizeInBytes()),
                     bloomFilterMetadata.sizeInBits(),
                     bloomFilterMetadata.numHashFunctions(),
-                    bloomFilterData
+                    bloomFilterData,
+                    si.name
                 );
                 success = true;
                 return bloomFilterFieldReader;
@@ -723,12 +725,14 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
             RandomAccessInput bloomFilterIn,
             int bloomFilterBitSetSizeInBits,
             int numHashFunctions,
-            IndexInput bloomFilterData
+            IndexInput bloomFilterData,
+            String segmentName
         ) {
             this.bloomFilterIn = bloomFilterIn;
             this.bloomFilterBitSetSizeInBits = bloomFilterBitSetSizeInBits;
             this.hashes = new int[numHashFunctions];
             this.bloomFilterData = bloomFilterData;
+            this.segmentName = segmentName;
         }
 
         public boolean mayContainTerm(String field, BytesRef term) throws IOException {
@@ -761,7 +765,7 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
         public void close() throws IOException {
             var total = numDocs.sum();
             var falseP = falsePositives.sum();
-            logger.info("--> total checks: {}, false positives: {}, false positive ratio {}", total, falseP, (double) falseP / total);
+            logger.info("--> total checks: {}, false positives: {}, false positive ratio {} {}", total, falseP, (double) falseP / total, segmentName);
             bloomFilterData.close();
         }
 
