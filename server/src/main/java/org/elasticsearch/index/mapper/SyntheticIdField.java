@@ -50,7 +50,7 @@ public final class SyntheticIdField extends Field {
         // it to IndexOptions.DOCS since Lucene ensures that the schema is consistent
         // and if it sees a new document with different index options it'll reject it
         // during indexing.
-        TYPE.setIndexOptions(IndexOptions.NONE);
+        TYPE.setIndexOptions(IndexOptions.DOCS);
         TYPE.setDocValuesType(DocValuesType.BINARY);
         TYPE.setTokenized(false);
         TYPE.setOmitNorms(true);
