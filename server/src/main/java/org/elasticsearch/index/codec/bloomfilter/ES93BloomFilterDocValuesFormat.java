@@ -649,7 +649,8 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
                 return bloomFilterFieldReader;
             }
 
-            @Override public String toString() {
+            @Override
+            public String toString() {
                 return bloomFilterFieldReader.toString();
             }
         }
@@ -724,10 +725,10 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
                 }
             }
         }
+
         private final LongAdder numDocs;
         private final LongAdder falsePositives;
         private final Logger logger = LogManager.getLogger(ES93BloomFilterDocValuesFormat.class);
-
 
         BloomFilterFieldReader(
             RandomAccessInput bloomFilterIn,
@@ -773,7 +774,6 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
             this.falsePositives = falsePositives;
         }
 
-
         public boolean mayContainTerm(String field, BytesRef term) throws IOException {
             // assert fieldInfo.getName().equals(field);
             numDocs.increment();
@@ -804,7 +804,14 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
         public void close() throws IOException {
             var total = numDocs.sum();
             var falseP = falsePositives.sum();
-            logger.info("--> total checks: {}, false positives: {}, false positive ratio {} {} - {}", total, falseP, (double) falseP / total, segmentName, maxDoc);
+            logger.info(
+                "--> total checks: {}, false positives: {}, false positive ratio {} {} - {}",
+                total,
+                falseP,
+                (double) falseP / total,
+                segmentName,
+                maxDoc
+            );
             bloomFilterData.close();
         }
 
@@ -820,7 +827,7 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
                 + '}';
         }
 
-        public BloomFilterFieldReader newIns() throws IOException{
+        public BloomFilterFieldReader newIns() throws IOException {
             return new BloomFilterFieldReader(
                 bloomFilterData.randomAccessSlice(bloomFilterMetadata.fileOffset(), bloomFilterMetadata.sizeInBytes()),
                 bloomFilterMetadata.sizeInBits(),

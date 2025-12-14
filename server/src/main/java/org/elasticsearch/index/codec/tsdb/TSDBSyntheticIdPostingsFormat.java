@@ -20,8 +20,8 @@ import org.apache.lucene.index.SegmentWriteState;
 import org.elasticsearch.core.IOUtils;
 import org.elasticsearch.index.codec.bloomfilter.BloomFilter;
 import org.elasticsearch.index.codec.bloomfilter.DelegatingBloomFilterFieldsProducer;
-import org.elasticsearch.index.codec.storedfields.TSDBStoredFieldsFormat;
 import org.elasticsearch.index.mapper.DataStreamTimestampFieldMapper;
+import org.elasticsearch.index.mapper.IdFieldMapper;
 import org.elasticsearch.index.mapper.SyntheticIdField;
 import org.elasticsearch.index.mapper.TimeSeriesIdFieldMapper;
 import org.elasticsearch.index.mapper.TimeSeriesRoutingHashFieldMapper;
@@ -48,10 +48,15 @@ public class TSDBSyntheticIdPostingsFormat extends PostingsFormat {
         boolean success = false;
         try {
             var codec = state.segmentInfo.getCodec();
-            BloomFilter bloomFilter = TSDBStoredFieldsFormat.getBloomFilterForId(state);
+            var idFieldInfo = state.fieldInfos.fieldInfo(IdFieldMapper.NAME);
 
             // Erase the segment suffix (used only for reading postings)
             docValuesProducer = codec.docValuesFormat().fieldsProducer(new SegmentReadState(state, ""));
+            var binaryDocValues = docValuesProducer.getBinary(idFieldInfo);
+            final BloomFilter bloomFilter = binaryDocValues instanceof BloomFilter
+                ? ((BloomFilter) binaryDocValues)
+                : BloomFilter.NO_FILTER;
+
             var fieldsProducer = new TSDBSyntheticIdFieldsProducer(state, docValuesProducer);
             success = true;
             return new DelegatingBloomFilterFieldsProducer(fieldsProducer, bloomFilter);

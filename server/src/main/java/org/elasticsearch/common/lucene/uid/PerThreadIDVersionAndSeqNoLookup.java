@@ -73,16 +73,16 @@ final class PerThreadIDVersionAndSeqNoLookup {
             final NumericDocValues tombstoneDV = reader.getNumericDocValues(SeqNoFieldMapper.TOMBSTONE_NAME);
             // this is a special case when we pruned away all IDs in a segment since all docs are deleted.
             final boolean allDocsDeleted = (softDeletesDV != null && reader.numDocs() == 0);
-//            if ((softDeletesDV == null || tombstoneDV == null) && allDocsDeleted == false) {
-//                throw new IllegalArgumentException(
-//                    "reader does not have _uid terms but not a no-op segment; "
-//                        + "_soft_deletes ["
-//                        + softDeletesDV
-//                        + "], _tombstone ["
-//                        + tombstoneDV
-//                        + "]"
-//                );
-//            }
+            if ((softDeletesDV == null || tombstoneDV == null) && allDocsDeleted == false) {
+                throw new IllegalArgumentException(
+                    "reader does not have _uid terms but not a no-op segment; "
+                        + "_soft_deletes ["
+                        + softDeletesDV
+                        + "], _tombstone ["
+                        + tombstoneDV
+                        + "]"
+                );
+            }
             termsEnum = null;
         } else {
             termsEnum = terms.iterator();
@@ -131,26 +131,25 @@ final class PerThreadIDVersionAndSeqNoLookup {
      * entirely for these readers.
      */
     public DocIdAndVersion lookupVersion(BytesRef id, boolean loadSeqNo, LeafReaderContext context) throws IOException {
-        return null;
-//        assert readerKey == null || context.reader().getCoreCacheHelper().getKey().equals(readerKey)
-//            : "context's reader is not the same as the reader class was initialized on.";
-//        int docID = getDocID(id, context);
-//
-//        if (docID != DocIdSetIterator.NO_MORE_DOCS) {
-//            final long seqNo;
-//            final long term;
-//            if (loadSeqNo) {
-//                seqNo = readNumericDocValues(context.reader(), SeqNoFieldMapper.NAME, docID);
-//                term = readNumericDocValues(context.reader(), SeqNoFieldMapper.PRIMARY_TERM_NAME, docID);
-//            } else {
-//                seqNo = UNASSIGNED_SEQ_NO;
-//                term = UNASSIGNED_PRIMARY_TERM;
-//            }
-//            final long version = readNumericDocValues(context.reader(), VersionFieldMapper.NAME, docID);
-//            return new DocIdAndVersion(docID, version, seqNo, term, context.reader(), context.docBase);
-//        } else {
-//            return null;
-//        }
+        assert readerKey == null || context.reader().getCoreCacheHelper().getKey().equals(readerKey)
+            : "context's reader is not the same as the reader class was initialized on.";
+        int docID = getDocID(id, context);
+
+        if (docID != DocIdSetIterator.NO_MORE_DOCS) {
+            final long seqNo;
+            final long term;
+            if (loadSeqNo) {
+                seqNo = readNumericDocValues(context.reader(), SeqNoFieldMapper.NAME, docID);
+                term = readNumericDocValues(context.reader(), SeqNoFieldMapper.PRIMARY_TERM_NAME, docID);
+            } else {
+                seqNo = UNASSIGNED_SEQ_NO;
+                term = UNASSIGNED_PRIMARY_TERM;
+            }
+            final long version = readNumericDocValues(context.reader(), VersionFieldMapper.NAME, docID);
+            return new DocIdAndVersion(docID, version, seqNo, term, context.reader(), context.docBase);
+        } else {
+            return null;
+        }
     }
 
     /**

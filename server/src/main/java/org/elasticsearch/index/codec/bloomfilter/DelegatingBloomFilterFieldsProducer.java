@@ -22,7 +22,6 @@ import org.elasticsearch.logging.Logger;
 import java.io.IOException;
 import java.util.Iterator;
 import java.util.Set;
-import java.util.concurrent.atomic.LongAdder;
 
 /**
  * A FieldsProducer that uses a Bloom filter for fast term existence checks before
@@ -94,10 +93,10 @@ public class DelegatingBloomFilterFieldsProducer extends FieldsProducer {
                 public boolean seekExact(BytesRef text) throws IOException {
                     bloomFilter.mayContainTerm(field, text);
                     return false;
-//                    if (bloomFilter.mayContainTerm(field, text) == false) {
-//                        return false;
-//                    }
-//                    return getDelegate().seekExact(text);
+                    // if (bloomFilter.mayContainTerm(field, text) == false) {
+                    // return false;
+                    // }
+                    // return getDelegate().seekExact(text);
                 }
             };
         }
