@@ -67,7 +67,7 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
     private static final byte BLOOM_FILTER_STORED = 1;
     private static final byte BLOOM_FILTER_NOT_STORED = 0;
     private static final ByteSizeValue MAX_BLOOM_FILTER_SIZE = ByteSizeValue.ofMb(8);
-    public static final ByteSizeValue DEFAULT_BLOOM_FILTER_SIZE = ByteSizeValue.ofMb(1);
+    public static final ByteSizeValue DEFAULT_BLOOM_FILTER_SIZE = ByteSizeValue.ofKb(512);
 
     private final BigArrays bigArrays;
     private final int numHashFunctions;
@@ -390,7 +390,7 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
 
         @Override
         public BinaryDocValues getBinary(FieldInfo field) throws IOException {
-            return new BloomFilterDocValues();
+            return new BloomFilterDocValues(bloomFilterFieldReader.newIns());
         }
 
         @Override
@@ -598,7 +598,13 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
             return bloomFilterFieldReader.mayContainTerm(field, term);
         }
 
-        private class BloomFilterDocValues extends BinaryDocValues implements BloomFilter {
+        private static class BloomFilterDocValues extends BinaryDocValues implements BloomFilter {
+            private final BloomFilterFieldReader bloomFilterFieldReader;
+
+            BloomFilterDocValues(BloomFilterFieldReader bloomFilterFieldReader) {
+                this.bloomFilterFieldReader = bloomFilterFieldReader;
+            }
+
             @Override
             public BytesRef binaryValue() throws IOException {
                 return null;
@@ -653,6 +659,7 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
         private final IndexInput bloomFilterData;
         private final String segmentName;
         private final int maxDoc;
+        private final BloomFilterMetadata bloomFilterMetadata;
         private final RandomAccessInput bloomFilterIn;
         private final int bloomFilterBitSetSizeInBits;
         private final int[] hashes;
@@ -706,7 +713,8 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
                     bloomFilterMetadata.numHashFunctions(),
                     bloomFilterData,
                     si.name,
-                    si.maxDoc()
+                    si.maxDoc(),
+                    bloomFilterMetadata
                 );
                 success = true;
                 return bloomFilterFieldReader;
@@ -726,13 +734,14 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
             int bloomFilterBitSetSizeInBits,
             int numHashFunctions,
             IndexInput bloomFilterData,
-            String segmentName, int maxDoc) {
+            String segmentName, int maxDoc, BloomFilterMetadata bloomFilterMetadata) {
             this.bloomFilterIn = bloomFilterIn;
             this.bloomFilterBitSetSizeInBits = bloomFilterBitSetSizeInBits;
             this.hashes = new int[numHashFunctions];
             this.bloomFilterData = bloomFilterData;
             this.segmentName = segmentName;
             this.maxDoc = maxDoc;
+            this.bloomFilterMetadata = bloomFilterMetadata;
         }
 
         public boolean mayContainTerm(String field, BytesRef term) throws IOException {
@@ -779,6 +788,18 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
                 + ", bloomFilterData="
                 + bloomFilterData
                 + '}';
+        }
+
+        public BloomFilterFieldReader newIns() throws IOException{
+            return new BloomFilterFieldReader(
+                bloomFilterData.randomAccessSlice(bloomFilterMetadata.fileOffset(), bloomFilterMetadata.sizeInBytes()),
+                bloomFilterMetadata.sizeInBits(),
+                bloomFilterMetadata.numHashFunctions(),
+                bloomFilterData,
+                segmentName,
+                maxDoc,
+                bloomFilterMetadata
+            );
         }
     }
 
