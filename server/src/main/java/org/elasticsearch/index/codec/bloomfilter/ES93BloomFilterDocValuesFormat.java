@@ -43,12 +43,15 @@ import org.elasticsearch.core.IOUtils;
 import org.elasticsearch.core.Nullable;
 import org.elasticsearch.index.codec.FilterDocValuesProducer;
 import org.elasticsearch.index.mapper.IdFieldMapper;
+import org.elasticsearch.logging.LogManager;
+import org.elasticsearch.logging.Logger;
 
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.atomic.LongAdder;
 import java.util.function.IntSupplier;
 
 import static org.elasticsearch.index.codec.bloomfilter.BloomFilterHashFunctions.MurmurHash3.hash64;
@@ -711,6 +714,10 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
                 }
             }
         }
+        private final LongAdder numDocs = new LongAdder();
+        private final LongAdder falsePositives = new LongAdder();
+        private final Logger logger = LogManager.getLogger(ES93BloomFilterDocValuesFormat.class);
+
 
         BloomFilterFieldReader(
             RandomAccessInput bloomFilterIn,
@@ -726,7 +733,7 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
 
         public boolean mayContainTerm(String field, BytesRef term) throws IOException {
             // assert fieldInfo.getName().equals(field);
-
+            numDocs.increment();
             var termHashes = hashTerm(term, hashes);
 
             for (int hash : termHashes) {
@@ -738,6 +745,7 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
                     return false;
                 }
             }
+            falsePositives.increment();
             return true;
         }
 
@@ -751,6 +759,9 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
 
         @Override
         public void close() throws IOException {
+            var total = numDocs.sum();
+            var falseP = falsePositives.sum();
+            logger.info("--> total checks: {}, false positives: {}, false positive ratio {}", total, falseP, (double) falseP / total);
             bloomFilterData.close();
         }
 

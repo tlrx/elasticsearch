@@ -33,8 +33,6 @@ public class DelegatingBloomFilterFieldsProducer extends FieldsProducer {
     private static final Set<String> FIELD_NAMES = Set.of(IdFieldMapper.NAME);
     private final FieldsProducer delegate;
     private final BloomFilter bloomFilter;
-    private final LongAdder numDocs = new LongAdder();
-    private final LongAdder falsePositives = new LongAdder();
     private final Logger logger = LogManager.getLogger(DelegatingBloomFilterFieldsProducer.class);
 
     public DelegatingBloomFilterFieldsProducer(FieldsProducer delegate, BloomFilter bloomFilter) {
@@ -44,9 +42,6 @@ public class DelegatingBloomFilterFieldsProducer extends FieldsProducer {
 
     @Override
     public void close() throws IOException {
-        var total = numDocs.sum();
-        var falseP = falsePositives.sum();
-        logger.info("--> total checks: {}, false positives: {}, false positive ratio {}", total, falseP, (double) falseP / total);
         IOUtils.close(delegate, bloomFilter);
     }
 
@@ -97,18 +92,10 @@ public class DelegatingBloomFilterFieldsProducer extends FieldsProducer {
 
                 @Override
                 public boolean seekExact(BytesRef text) throws IOException {
-                    numDocs.increment();
                     if (bloomFilter.mayContainTerm(field, text) == false) {
                         return false;
                     }
-                    boolean found = getDelegate().seekExact(text);
-                    if (found == false) {
-                        var total = numDocs.sum();
-                        var falseP = falsePositives.sum();
-                        logger.info("--> total checks: {}, false positives: {}, false positive ratio {} {}", total, falseP, (double) falseP / total, bloomFilter);
-                        falsePositives.increment();
-                    }
-                    return found;
+                    return getDelegate().seekExact(text);
                 }
             };
         }

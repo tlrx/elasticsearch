@@ -223,12 +223,6 @@ public final class VersionsAndSeqNoResolver {
             }
             return super.terms(field);
         }
-
-        @Override
-        protected void doClose() throws IOException {
-            super.doClose();
-            postingsFormat.close();
-        }
     }
 
     /**
