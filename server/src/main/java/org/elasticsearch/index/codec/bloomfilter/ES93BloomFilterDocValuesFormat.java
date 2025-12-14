@@ -40,7 +40,6 @@ import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.common.util.ByteArray;
 import org.elasticsearch.core.IOUtils;
-import org.elasticsearch.core.Nullable;
 import org.elasticsearch.index.codec.FilterDocValuesProducer;
 import org.elasticsearch.index.mapper.IdFieldMapper;
 import org.elasticsearch.logging.LogManager;
@@ -49,7 +48,6 @@ import org.elasticsearch.logging.Logger;
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.function.IntSupplier;
@@ -69,7 +67,7 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
     private static final byte BLOOM_FILTER_STORED = 1;
     private static final byte BLOOM_FILTER_NOT_STORED = 0;
     private static final ByteSizeValue MAX_BLOOM_FILTER_SIZE = ByteSizeValue.ofMb(8);
-    public static final ByteSizeValue DEFAULT_BLOOM_FILTER_SIZE = ByteSizeValue.ofKb(512);
+    public static final ByteSizeValue DEFAULT_BLOOM_FILTER_SIZE = ByteSizeValue.ofMb(1);
 
     private final BigArrays bigArrays;
     private final int numHashFunctions;
@@ -654,6 +652,7 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
     static class BloomFilterFieldReader implements BloomFilter {
         private final IndexInput bloomFilterData;
         private final String segmentName;
+        private final int maxDoc;
         private final RandomAccessInput bloomFilterIn;
         private final int bloomFilterBitSetSizeInBits;
         private final int[] hashes;
@@ -706,7 +705,8 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
                     bloomFilterMetadata.sizeInBits(),
                     bloomFilterMetadata.numHashFunctions(),
                     bloomFilterData,
-                    si.name
+                    si.name,
+                    si.maxDoc()
                 );
                 success = true;
                 return bloomFilterFieldReader;
@@ -726,13 +726,13 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
             int bloomFilterBitSetSizeInBits,
             int numHashFunctions,
             IndexInput bloomFilterData,
-            String segmentName
-        ) {
+            String segmentName, int maxDoc) {
             this.bloomFilterIn = bloomFilterIn;
             this.bloomFilterBitSetSizeInBits = bloomFilterBitSetSizeInBits;
             this.hashes = new int[numHashFunctions];
             this.bloomFilterData = bloomFilterData;
             this.segmentName = segmentName;
+            this.maxDoc = maxDoc;
         }
 
         public boolean mayContainTerm(String field, BytesRef term) throws IOException {
@@ -765,7 +765,7 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
         public void close() throws IOException {
             var total = numDocs.sum();
             var falseP = falsePositives.sum();
-            logger.info("--> total checks: {}, false positives: {}, false positive ratio {} {}", total, falseP, (double) falseP / total, segmentName);
+            logger.info("--> total checks: {}, false positives: {}, false positive ratio {} {} - {}", total, falseP, (double) falseP / total, segmentName, maxDoc);
             bloomFilterData.close();
         }
 
