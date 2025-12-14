@@ -724,8 +724,8 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
                 }
             }
         }
-        private final LongAdder numDocs = new LongAdder();
-        private final LongAdder falsePositives = new LongAdder();
+        private final LongAdder numDocs;
+        private final LongAdder falsePositives;
         private final Logger logger = LogManager.getLogger(ES93BloomFilterDocValuesFormat.class);
 
 
@@ -734,7 +734,34 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
             int bloomFilterBitSetSizeInBits,
             int numHashFunctions,
             IndexInput bloomFilterData,
-            String segmentName, int maxDoc, BloomFilterMetadata bloomFilterMetadata) {
+            String segmentName,
+            int maxDoc,
+            BloomFilterMetadata bloomFilterMetadata
+        ) {
+            this(
+                bloomFilterIn,
+                bloomFilterBitSetSizeInBits,
+                numHashFunctions,
+                bloomFilterData,
+                segmentName,
+                maxDoc,
+                bloomFilterMetadata,
+                new LongAdder(),
+                new LongAdder()
+            );
+        }
+
+        BloomFilterFieldReader(
+            RandomAccessInput bloomFilterIn,
+            int bloomFilterBitSetSizeInBits,
+            int numHashFunctions,
+            IndexInput bloomFilterData,
+            String segmentName,
+            int maxDoc,
+            BloomFilterMetadata bloomFilterMetadata,
+            LongAdder numDocs,
+            LongAdder falsePositives
+        ) {
             this.bloomFilterIn = bloomFilterIn;
             this.bloomFilterBitSetSizeInBits = bloomFilterBitSetSizeInBits;
             this.hashes = new int[numHashFunctions];
@@ -742,7 +769,10 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
             this.segmentName = segmentName;
             this.maxDoc = maxDoc;
             this.bloomFilterMetadata = bloomFilterMetadata;
+            this.numDocs = numDocs;
+            this.falsePositives = falsePositives;
         }
+
 
         public boolean mayContainTerm(String field, BytesRef term) throws IOException {
             // assert fieldInfo.getName().equals(field);
@@ -798,7 +828,9 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
                 bloomFilterData,
                 segmentName,
                 maxDoc,
-                bloomFilterMetadata
+                bloomFilterMetadata,
+                numDocs,
+                falsePositives
             );
         }
     }
