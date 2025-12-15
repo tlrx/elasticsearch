@@ -67,7 +67,7 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
     private static final byte BLOOM_FILTER_STORED = 1;
     private static final byte BLOOM_FILTER_NOT_STORED = 0;
     private static final ByteSizeValue MAX_BLOOM_FILTER_SIZE = ByteSizeValue.ofMb(8);
-    public static final ByteSizeValue DEFAULT_BLOOM_FILTER_SIZE = ByteSizeValue.ofKb(512);
+    public static final ByteSizeValue DEFAULT_BLOOM_FILTER_SIZE = ByteSizeValue.ofMb(1);
 
     private final BigArrays bigArrays;
     private final int numHashFunctions;
@@ -776,7 +776,6 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
 
         public boolean mayContainTerm(String field, BytesRef term) throws IOException {
             // assert fieldInfo.getName().equals(field);
-            numDocs.increment();
             var termHashes = hashTerm(term, hashes);
 
             for (int hash : termHashes) {
@@ -788,7 +787,6 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
                     return false;
                 }
             }
-            falsePositives.increment();
             return true;
         }
 
