@@ -800,16 +800,16 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
 
         @Override
         public void close() throws IOException {
-            var total = numDocs.sum();
-            var falseP = falsePositives.sum();
-            logger.info(
-                "--> total checks: {}, false positives: {}, false positive ratio {} {} - {}",
-                total,
-                falseP,
-                (double) falseP / total,
-                segmentName,
-                maxDoc
-            );
+            // var total = numDocs.sum();
+            // var falseP = falsePositives.sum();
+            // logger.info(
+            // "--> total checks: {}, false positives: {}, false positive ratio {} {} - {}",
+            // total,
+            // falseP,
+            // (double) falseP / total,
+            // segmentName,
+            // maxDoc
+            // );
             bloomFilterData.close();
         }
 
