@@ -76,7 +76,7 @@ public final class VersionsAndSeqNoResolver {
         if (lookupState == null) {
             lookupState = new PerThreadIDVersionAndSeqNoLookup[reader.leaves().size()];
             for (LeafReaderContext leaf : reader.leaves()) {
-                lookupState[leaf.ord] = new PerThreadIDVersionAndSeqNoLookup(leaf.reader(), loadTimestampRange);
+                lookupState[leaf.ord] = new PerThreadIDVersionAndSeqNoLookup(new IDReader(leaf.reader()), loadTimestampRange);
             }
             ctl.set(lookupState);
         } else {
