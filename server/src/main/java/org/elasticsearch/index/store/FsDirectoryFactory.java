@@ -158,7 +158,7 @@ public class FsDirectoryFactory implements IndexStorePlugin.DirectoryFactory {
                 return Optional.of(ReadAdvice.NORMAL);
             }
             if (name.endsWith(".cfs")) {
-                return Optional.of(ReadAdvice.RANDOM);
+                return Optional.of(ReadAdvice.NORMAL);
             }
             if (name.endsWith(".sfbf")) {
                 return Optional.of(ReadAdvice.RANDOM);
