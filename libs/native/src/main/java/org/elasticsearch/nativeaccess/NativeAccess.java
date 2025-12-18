@@ -9,6 +9,7 @@
 
 package org.elasticsearch.nativeaccess;
 
+import java.nio.MappedByteBuffer;
 import java.nio.file.Path;
 import java.util.Optional;
 import java.util.OptionalLong;
@@ -113,5 +114,9 @@ public interface NativeAccess {
         EXISTING_THREADS,
         /** Exec is blocked for all current and future threads */
         ALL_THREADS
+    }
+
+    default int madviseRandom(MappedByteBuffer buffer) {
+        return -1;
     }
 }

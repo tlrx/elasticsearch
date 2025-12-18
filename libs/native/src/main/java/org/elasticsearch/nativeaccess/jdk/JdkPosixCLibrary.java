@@ -23,6 +23,7 @@ import java.lang.foreign.StructLayout;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
+import java.nio.MappedByteBuffer;
 
 import static java.lang.foreign.MemoryLayout.PathElement.groupElement;
 import static java.lang.foreign.ValueLayout.ADDRESS;
@@ -277,6 +278,25 @@ class JdkPosixCLibrary implements PosixCLibrary {
             return (long) send$mh.invokeExact(errnoState, sockfd, segment, (long) buffer.buffer().remaining(), flags);
         } catch (Throwable t) {
             throw new AssertionError(t);
+        }
+    }
+
+    private static final MethodHandle posix_madvise$mh = downcallHandle(
+        "posix_madvise",
+        FunctionDescriptor.of(
+            JAVA_INT,
+            ADDRESS,
+            JAVA_LONG,
+            JAVA_INT)
+    );
+
+    @Override
+    public int madviseRandom(MappedByteBuffer buffer) {
+        try {
+            MemorySegment segment = MemorySegment.ofBuffer(buffer);
+            return  (int) posix_madvise$mh.invokeExact(segment,segment.byteSize(), 1 /*POSIX_MADV_RANDOM*/);
+        } catch (Throwable th) {
+            throw new AssertionError(th);
         }
     }
 

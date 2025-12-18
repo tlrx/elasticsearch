@@ -11,12 +11,14 @@ package org.elasticsearch.index.engine;
 
 import org.apache.logging.log4j.Logger;
 import org.apache.lucene.codecs.Codec;
+import org.apache.lucene.document.Field;
 import org.apache.lucene.document.NumericDocValuesField;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexCommit;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
+import org.apache.lucene.index.IndexableField;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.LiveIndexWriterConfig;
 import org.apache.lucene.index.MergePolicy;
@@ -39,6 +41,7 @@ import org.apache.lucene.store.AlreadyClosedException;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.LockObtainFailedException;
 import org.apache.lucene.util.BytesRef;
+import org.apache.lucene.util.FilterIterator;
 import org.apache.lucene.util.InfoStream;
 import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.action.ActionListener;
@@ -112,6 +115,7 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -3445,6 +3449,82 @@ public class InternalEngine extends Engine {
                 throw new AssertionError("tryDeleteDocument is not supported. See Lucene#DirectoryReaderWithAllLiveDocs");
             }
             return super.tryDeleteDocument(readerIn, docID);
+        }
+
+        @Override
+        public long addDocument(Iterable<? extends IndexableField> doc) throws IOException {
+            return super.addDocument(new FilteredIndexableField<>(doc));
+        }
+
+        @Override
+        public long addDocuments(Iterable<? extends Iterable<? extends IndexableField>> docs) throws IOException {
+            return super.addDocuments(() -> {
+                final var delegate = docs.iterator();
+                return new Iterator<>() {
+                    @Override
+                    public boolean hasNext() {
+                        return delegate.hasNext();
+                    }
+
+                    @Override
+                    public Iterable<? extends IndexableField> next() {
+                        var next = delegate.next();
+                        if (next != null) {
+                            return new FilteredIndexableField<>(next);
+                        }
+                        return null;
+                    }
+                };
+            });
+        }
+
+        @Override
+        public long softUpdateDocuments(Term term, Iterable<? extends Iterable<? extends IndexableField>> docs, Field... softDeletes) throws IOException {
+            return super.softUpdateDocuments(term, () -> {
+                final var delegate = docs.iterator();
+                return new Iterator<>() {
+                    @Override
+                    public boolean hasNext() {
+                        return delegate.hasNext();
+                    }
+
+                    @Override
+                    public Iterable<? extends IndexableField> next() {
+                        var next = delegate.next();
+                        if (next != null) {
+                            return new FilteredIndexableField<>(next);
+                        }
+                        return null;
+                    }
+                };
+            }, softDeletes);
+        }
+
+        @Override
+        public long softUpdateDocument(Term term, Iterable<? extends IndexableField> doc, Field... softDeletes) throws IOException {
+            return super.softUpdateDocument(term, new FilteredIndexableField<>(doc), softDeletes);
+        }
+    }
+
+    private static class FilteredIndexableField<F extends IndexableField> implements Iterable<F> {
+
+        private final Iterable<F> delegate;
+
+        private FilteredIndexableField(Iterable<F> delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public Iterator<F> iterator() {
+            return new FilterIterator<>(delegate.iterator()) {
+                @Override
+                protected boolean predicateFunction(F field) {
+                    if (IdFieldMapper.NAME.equals(field.name())) {
+                        return true;
+                    }
+                    return false;
+                }
+            };
         }
     }
 

@@ -29,32 +29,41 @@ import org.apache.lucene.index.SortedNumericDocValues;
 import org.apache.lucene.index.SortedSetDocValues;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.FilterDirectory;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.store.IndexOutput;
+import org.apache.lucene.store.OutputStreamDataOutput;
 import org.apache.lucene.store.RandomAccessInput;
 import org.apache.lucene.util.BytesRef;
-import org.elasticsearch.common.bytes.BytesReference;
-import org.elasticsearch.common.lucene.store.IndexOutputOutputStream;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.common.util.BigArrays;
-import org.elasticsearch.common.util.ByteArray;
 import org.elasticsearch.core.IOUtils;
 import org.elasticsearch.index.codec.FilterDocValuesProducer;
 import org.elasticsearch.index.mapper.IdFieldMapper;
+import org.elasticsearch.index.store.FsDirectoryFactory;
 import org.elasticsearch.logging.LogManager;
 import org.elasticsearch.logging.Logger;
+import org.elasticsearch.nativeaccess.NativeAccess;
 
+import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
 import java.io.IOException;
+import java.nio.MappedByteBuffer;
+import java.nio.channels.FileChannel;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.function.IntSupplier;
+import java.util.zip.CRC32;
 
 import static org.elasticsearch.index.codec.bloomfilter.BloomFilterHashFunctions.MurmurHash3.hash64;
 
 public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
+
+    private static final NativeAccess nativeAccess = NativeAccess.instance();
+
     public static final String FORMAT_NAME = "ES93BloomFilterPostingsFormat";
     public static final String STORED_FIELDS_BLOOM_FILTER_EXTENSION = "sfbf";
     public static final String STORED_FIELDS_METADATA_BLOOM_FILTER_EXTENSION = "sfbfm";
@@ -63,7 +72,7 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
 
     // We use prime numbers with the Kirsch-Mitzenmacher technique to obtain multiple hashes from two hash functions
     private static final int[] PRIMES = new int[] { 2, 5, 11, 17, 23, 29, 41, 47, 53, 59, 71 };
-    private static final int DEFAULT_NUM_HASH_FUNCTIONS = 7;
+    private static final int DEFAULT_NUM_HASH_FUNCTIONS = 4;
     private static final byte BLOOM_FILTER_STORED = 1;
     private static final byte BLOOM_FILTER_NOT_STORED = 0;
     private static final ByteSizeValue MAX_BLOOM_FILTER_SIZE = ByteSizeValue.ofMb(8);
@@ -105,10 +114,13 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
         private final List<Closeable> toClose = new ArrayList<>();
 
         private final IndexOutput metadataOut;
-        private final IndexOutput bloomFilterDataOut;
+        // private final IndexOutput bloomFilterDataOut;
+        private final FileChannel bloomFileChannel;
+        private final MappedByteBuffer bloomByteBuffer;
+        private final int bloomByteBufferHeaderSize;
+        private final long bloomByteBufferSize;
         private final int bitsetSizeInBits;
         private final int bitSetSizeInBytes;
-        private final ByteArray buffer;
         private final int[] hashes;
         private boolean closed;
 
@@ -130,27 +142,61 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
             this.hashes = new int[numHashFunctions];
             this.bloomFilterFieldName = bloomFilterFieldName;
 
+            this.bitsetSizeInBits = defaultBloomFilterSizeInBitsSupplier.getAsInt();
+            this.bitSetSizeInBytes = bitsetSizeInBits / Byte.SIZE;
+
             boolean success = false;
             try {
                 metadataOut = state.directory.createOutput(bloomFilterMetadataFileName(segmentInfo, state.segmentSuffix), context);
                 toClose.add(metadataOut);
                 CodecUtil.writeIndexHeader(metadataOut, FORMAT_NAME, VERSION_CURRENT, segmentInfo.getId(), state.segmentSuffix);
 
-                bloomFilterDataOut = state.directory.createOutput(bloomFilterFileName(segmentInfo, state.segmentSuffix), context);
-                toClose.add(bloomFilterDataOut);
+                var bloomDataFileName = bloomFilterFileName(segmentInfo, state.segmentSuffix);
+                var output = state.directory.createOutput(bloomDataFileName, context);
+                IOUtils.close(output);
 
-                CodecUtil.writeIndexHeader(bloomFilterDataOut, FORMAT_NAME, VERSION_CURRENT, segmentInfo.getId(), state.segmentSuffix);
-                success = true;
+                var dir = FilterDirectory.unwrap(state.directory);
+                if (dir instanceof FsDirectoryFactory.HybridDirectory hybridDirectory) {
+                    var path = hybridDirectory.getDirectory().resolve(bloomDataFileName);
+
+                    try (var byteArrayOutputStream = new ByteArrayOutputStream()) {
+                        try (var outputStreamDataOutput = new OutputStreamDataOutput(byteArrayOutputStream)) {
+                            CodecUtil.writeIndexHeader(
+                                outputStreamDataOutput,
+                                FORMAT_NAME,
+                                VERSION_CURRENT,
+                                segmentInfo.getId(),
+                                state.segmentSuffix
+                            );
+                            byteArrayOutputStream.flush();
+
+                            bloomByteBufferHeaderSize = byteArrayOutputStream.size();
+                            bloomByteBufferSize = bloomByteBufferHeaderSize + bitSetSizeInBytes + CodecUtil.footerLength();
+                            NativeAccess.instance().tryPreallocate(path, bloomByteBufferSize);
+                        }
+
+                        this.bloomFileChannel = FileChannel.open(
+                            path,
+                            StandardOpenOption.CREATE,
+                            StandardOpenOption.READ,
+                            StandardOpenOption.WRITE
+                        );
+                        toClose.add(bloomFileChannel);
+
+                        var mappedByteBuffer = bloomFileChannel.map(FileChannel.MapMode.READ_WRITE, 0, bloomByteBufferSize);
+                        nativeAccess.madviseRandom(mappedByteBuffer);
+                        mappedByteBuffer.put(byteArrayOutputStream.toByteArray());
+                        this.bloomByteBuffer = mappedByteBuffer;
+                        success = true;
+                    }
+                } else {
+                    throw new IllegalArgumentException("unsupported directory [" + bloomDataFileName + "]");
+                }
             } finally {
                 if (success == false) {
                     IOUtils.closeWhileHandlingException(toClose);
                 }
             }
-
-            this.bitsetSizeInBits = defaultBloomFilterSizeInBitsSupplier.getAsInt();
-            this.bitSetSizeInBytes = bitsetSizeInBits / Byte.SIZE;
-            this.buffer = bigArrays.newByteArray(bitSetSizeInBytes);
-            toClose.add(buffer);
         }
 
         @Override
@@ -158,13 +204,21 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
             var values = valuesProducer.getBinary(field);
             for (int doc = values.nextDoc(); doc != DocIdSetIterator.NO_MORE_DOCS; doc = values.nextDoc()) {
                 BytesRef term = values.binaryValue();
-                var termHashes = hashTerm(term, hashes);
-                for (int hash : termHashes) {
+
+                long hash64 = hash64(term.bytes, term.offset, term.length);
+                // First use output splitting to get two hash values out of a single hash function
+                int upperHalf = (int) (hash64 >> Integer.SIZE);
+                int lowerHalf = (int) hash64;
+                // Then use the Kirsch-Mitzenmacher technique to obtain multiple hashes efficiently
+                for (int i = 0; i < hashes.length; i++) {
+                    // Use prime numbers as the constant for the KM technique so these don't have a common gcd
+                    int hash = (lowerHalf + PRIMES[i] * upperHalf) & 0x7FFF_FFFF; // Clears sign bit, gives positive 31-bit values
+
                     final int posInBitArray = hash & (bitsetSizeInBits - 1);
-                    final int pos = posInBitArray >> 3; // div 8
+                    final int pos = Math.addExact(posInBitArray >> 3, bloomByteBufferHeaderSize);
                     final int mask = 1 << (posInBitArray & 7); // mod 8
-                    final byte val = (byte) (buffer.get(pos) | mask);
-                    buffer.set(pos, val);
+                    final byte val = (byte) (bloomByteBuffer.get(pos) | mask);
+                    bloomByteBuffer.put(Math.toIntExact(pos), val);
                 }
             }
         }
@@ -177,18 +231,45 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
 
         private void flush() throws IOException {
             BloomFilterMetadata bloomFilterMetadata = new BloomFilterMetadata(
-                bloomFilterDataOut.getFilePointer(),
+                bloomByteBufferHeaderSize,
                 bitsetSizeInBits,
                 numHashFunctions
             );
 
-            if (buffer.hasArray()) {
-                bloomFilterDataOut.writeBytes(buffer.array(), 0, bitSetSizeInBytes);
-            } else {
-                BytesReference.fromByteArray(buffer, bitSetSizeInBytes).writeTo(new IndexOutputOutputStream(bloomFilterDataOut));
-            }
+            var end = Math.toIntExact(bloomByteBufferHeaderSize + DEFAULT_BLOOM_FILTER_SIZE.getBytes());
+            CRC32 crc32 = new CRC32();
+            crc32.update(bloomByteBuffer.slice(0, end));
 
-            CodecUtil.writeFooter(bloomFilterDataOut);
+            bloomByteBuffer.position(end);
+            CodecUtil.writeFooter(new IndexOutput("footer", "footer") {
+                @Override
+                public void close() throws IOException {
+                }
+
+                @Override
+                public long getFilePointer() {
+                    return bloomByteBuffer.position();
+                }
+
+                @Override
+                public void writeByte(byte b) throws IOException {
+                    bloomByteBuffer.put(b);
+                    crc32.update(b);
+                }
+
+                @Override
+                public void writeBytes(byte[] b, int offset, int length) throws IOException {
+                    bloomByteBuffer.put(b, offset, length);
+                    crc32.update(b, offset, length);
+                }
+
+                @Override
+                public long getChecksum() throws IOException {
+                    return crc32.getValue();
+                }
+            });
+
+            bloomByteBuffer.force();
 
             // TODO: this is not necessary
             if (bloomFilterMetadata != null) {
@@ -318,8 +399,9 @@ public class ES93BloomFilterDocValuesFormat extends DocValuesFormat {
                     bloomFilterData.prefetch(0, bitSetSizeInBytes);
                     for (int i = 0; i < bitSetSizeInBytes; i++) {
                         var existingBloomFilterByte = bloomFilterData.readByte(i);
-                        var resultingBloomFilterByte = buffer.get(i);
-                        buffer.set(i, (byte) (existingBloomFilterByte | resultingBloomFilterByte));
+                        int pos = Math.addExact(i, bloomByteBufferHeaderSize);
+                        var resultingBloomFilterByte = bloomByteBuffer.get(pos);
+                        bloomByteBuffer.put(pos, (byte) (existingBloomFilterByte | resultingBloomFilterByte));
                     }
                 }
             }

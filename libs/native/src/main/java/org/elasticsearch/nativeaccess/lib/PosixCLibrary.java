@@ -11,6 +11,8 @@ package org.elasticsearch.nativeaccess.lib;
 
 import org.elasticsearch.nativeaccess.CloseableByteBuffer;
 
+import java.nio.MappedByteBuffer;
+
 /**
  * Provides access to methods in libc.so available on POSIX systems.
  */
@@ -161,4 +163,7 @@ public non-sealed interface PosixCLibrary extends NativeLibrary {
      * @see <a href="https://man7.org/linux/man-pages/man3/errno.3.html">errno manpage</a>
      */
     int errno();
+
+    int madviseRandom(MappedByteBuffer buffer);
+
 }

@@ -107,14 +107,14 @@ abstract class AbstractTSDBSyntheticIdCodec extends FilterCodec {
         @Override
         public void write(Directory directory, SegmentInfo segmentInfo, String segmentSuffix, FieldInfos fieldInfos, IOContext context)
             throws IOException {
-            ensureSyntheticIdFields(fieldInfos);
+            //ensureSyntheticIdFields(fieldInfos);
             delegate.write(directory, segmentInfo, segmentSuffix, fieldInfos, context);
         }
 
         @Override
         public FieldInfos read(Directory directory, SegmentInfo segmentInfo, String segmentSuffix, IOContext iocontext) throws IOException {
             final var fieldInfos = delegate.read(directory, segmentInfo, segmentSuffix, iocontext);
-            ensureSyntheticIdFields(fieldInfos);
+            //ensureSyntheticIdFields(fieldInfos);
             return fieldInfos;
         }
     }

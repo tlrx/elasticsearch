@@ -14,6 +14,7 @@ import org.elasticsearch.nativeaccess.lib.NativeLibraryProvider;
 import org.elasticsearch.nativeaccess.lib.PosixCLibrary;
 import org.elasticsearch.nativeaccess.lib.VectorLibrary;
 
+import java.nio.MappedByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Optional;
@@ -225,5 +226,10 @@ abstract class PosixNativeAccess extends AbstractNativeAccess {
     )
     static boolean checkEnableSystemProperty() {
         return Optional.ofNullable(System.getProperty(ENABLE_JDK_VECTOR_LIBRARY)).map(Boolean::valueOf).orElse(Boolean.TRUE);
+    }
+
+    @Override
+    public int madviseRandom(MappedByteBuffer buffer) {
+        return libc.madviseRandom(buffer);
     }
 }
