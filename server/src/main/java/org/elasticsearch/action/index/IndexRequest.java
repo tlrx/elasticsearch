@@ -709,7 +709,7 @@ public class IndexRequest extends ReplicatedWriteRequest<IndexRequest> implement
         id(UUIDs.base64TimeBasedKOrderedUUIDWithHash(hash));
     }
 
-    private void autoGenerateTimestamp() {
+    public void autoGenerateTimestamp() {
         /*
          * Set the auto generated timestamp so the append only optimization
          * can quickly test if this request *must* be unique without reaching

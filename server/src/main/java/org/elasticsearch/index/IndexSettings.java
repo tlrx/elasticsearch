@@ -291,7 +291,7 @@ public final class IndexSettings {
         Property.IndexScope
     );
 
-    public static final TimeValue DEFAULT_REFRESH_INTERVAL = new TimeValue(1, TimeUnit.SECONDS);
+    public static final TimeValue DEFAULT_REFRESH_INTERVAL = TimeValue.MINUS_ONE;
     public static final Setting<TimeValue> NODE_DEFAULT_REFRESH_INTERVAL_SETTING = Setting.timeSetting(
         "node._internal.default_refresh_interval",
         DEFAULT_REFRESH_INTERVAL,
@@ -1249,28 +1249,8 @@ public final class IndexSettings {
         useTimeSeriesDocValuesFormat = scopedSettings.get(USE_TIME_SERIES_DOC_VALUES_FORMAT_SETTING);
         useTimeSeriesDocValuesFormatLargeBlockSize = scopedSettings.get(USE_TIME_SERIES_DOC_VALUES_FORMAT_LARGE_BLOCK_SIZE);
         useEs812PostingsFormat = scopedSettings.get(USE_ES_812_POSTINGS_FORMAT);
-        final var useSyntheticId = IndexSettings.TSDB_SYNTHETIC_ID_FEATURE_FLAG && indexMetadata.getIndexMode() == IndexMode.TIME_SERIES;
-        if (indexMetadata.useTimeSeriesSyntheticId() != useSyntheticId) {
-            assert false;
-            throw new IllegalArgumentException(
-                String.format(
-                    Locale.ROOT,
-                    "The setting [%s] is set to [%s] but index metadata has a different value [%s].",
-                    USE_SYNTHETIC_ID.getKey(),
-                    useSyntheticId,
-                    indexMetadata.useTimeSeriesSyntheticId()
-                )
-            );
-        }
-        if (useSyntheticId) {
-            assert TSDB_SYNTHETIC_ID_FEATURE_FLAG;
-            assert indexMetadata.useTimeSeriesSyntheticId();
-            assert indexMetadata.getIndexMode() == IndexMode.TIME_SERIES : indexMetadata.getIndexMode();
-            assert indexMetadata.getCreationVersion().onOrAfter(IndexVersions.TIME_SERIES_USE_SYNTHETIC_ID);
-            useTimeSeriesSyntheticId = true;
-        } else {
-            useTimeSeriesSyntheticId = false;
-        }
+        useTimeSeriesSyntheticId = indexMetadata.useTimeSeriesSyntheticId();
+
         if (recoverySourceSyntheticEnabled) {
             if (DiscoveryNode.isStateless(settings)) {
                 throw new IllegalArgumentException("synthetic recovery source is only allowed in stateful");

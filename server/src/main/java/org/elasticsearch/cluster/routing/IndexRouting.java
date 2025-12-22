@@ -343,6 +343,7 @@ public abstract class IndexRouting {
         @Override
         public void postProcess(IndexRequest indexRequest) {
             if (trackTimeSeriesRoutingHash) {
+                indexRequest.autoGenerateTimestamp();
                 indexRequest.routing(TimeSeriesRoutingHashFieldMapper.encode(hash));
             } else if (addIdWithRoutingHash) {
                 assert hash != Integer.MAX_VALUE;
