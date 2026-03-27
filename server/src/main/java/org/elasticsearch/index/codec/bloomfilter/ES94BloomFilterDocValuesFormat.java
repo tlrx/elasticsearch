@@ -766,6 +766,27 @@ public class ES94BloomFilterDocValuesFormat extends DocValuesFormat {
         }
 
         @Override
+        public long sizeInBits() {
+            return bloomFilterBitSetSizeInBits;
+        }
+
+        @Override
+        public long getBitsSet() throws IOException {
+            long bitsSet = 0;
+            int sizeInBytes = getBloomFilterBitSetSizeInBytes();
+            int pos = 0;
+            while (pos + Long.BYTES <= sizeInBytes) {
+                bitsSet += Long.bitCount(bloomFilterIn.readLong(pos));
+                pos += Long.BYTES;
+            }
+            while (pos < sizeInBytes) {
+                bitsSet += Integer.bitCount(bloomFilterIn.readByte(pos) & 0xFF);
+                pos++;
+            }
+            return bitsSet;
+        }
+
+        @Override
         public int docID() {
             return -1;
         }

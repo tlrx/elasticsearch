@@ -9,8 +9,17 @@
 
 package org.elasticsearch.index;
 
+import org.apache.lucene.codecs.FieldsProducer;
+import org.apache.lucene.document.LongPoint;
 import org.apache.lucene.index.DirectoryReader;
+import org.apache.lucene.index.DocValuesSkipIndexType;
+import org.apache.lucene.index.DocValuesSkipper;
+import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.index.PointValues;
+import org.apache.lucene.index.SegmentReader;
+import org.apache.lucene.index.SortedDocValues;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.Sort;
 import org.apache.lucene.store.AlreadyClosedException;
@@ -19,12 +28,14 @@ import org.apache.lucene.util.Accountable;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.support.RefCountingRunnable;
 import org.elasticsearch.client.internal.Client;
+import org.elasticsearch.cluster.metadata.DataStream;
 import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.cluster.metadata.IndexNameExpressionResolver;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.routing.ShardRouting;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.io.stream.NamedWriteableRegistry;
+import org.elasticsearch.common.lucene.Lucene;
 import org.elasticsearch.common.regex.Regex;
 import org.elasticsearch.common.settings.Setting;
 import org.elasticsearch.common.settings.Setting.Property;
@@ -47,6 +58,7 @@ import org.elasticsearch.index.analysis.IndexAnalyzers;
 import org.elasticsearch.index.cache.IndexCache;
 import org.elasticsearch.index.cache.bitset.BitsetFilterCache;
 import org.elasticsearch.index.cache.query.QueryCache;
+import org.elasticsearch.index.codec.bloomfilter.DelegatingBloomFilterFieldsProducer;
 import org.elasticsearch.index.engine.Engine;
 import org.elasticsearch.index.engine.EngineFactory;
 import org.elasticsearch.index.engine.MergeMetrics;
@@ -65,6 +77,7 @@ import org.elasticsearch.index.mapper.MappingLookup;
 import org.elasticsearch.index.mapper.MappingParserContext;
 import org.elasticsearch.index.mapper.NodeMappingStats;
 import org.elasticsearch.index.mapper.RuntimeField;
+import org.elasticsearch.index.mapper.TimeSeriesIdFieldMapper;
 import org.elasticsearch.index.query.QueryRewriteContext;
 import org.elasticsearch.index.query.SearchExecutionContext;
 import org.elasticsearch.index.query.SearchIndexNameMatcher;
@@ -155,6 +168,8 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
     private volatile AsyncTranslogFSync fsyncTask;
     private final AsyncGlobalCheckpointTask globalCheckpointTask;
     private final AsyncRetentionLeaseSyncTask retentionLeaseSyncTask;
+    @Nullable
+    private volatile AsyncSegmentStatsTask segmentStatsTask;
 
     // don't convert to Setting<> and register... we only set this in tests and register via a plugin
     private final String INDEX_TRANSLOG_RETENTION_CHECK_INTERVAL_SETTING = "index.translog.retention.check_interval";
@@ -305,6 +320,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
             this.trimTranslogTask = new AsyncTrimTranslogTask(this);
             this.globalCheckpointTask = new AsyncGlobalCheckpointTask(this);
             this.retentionLeaseSyncTask = new AsyncRetentionLeaseSyncTask(this);
+            this.segmentStatsTask = createSegmentStatsTaskIfEnabled();
         }
         this.indexingStatsSettings = indexingStatsSettings;
         this.searchStatsSettings = searchStatsSettings;
@@ -416,7 +432,8 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
                     fsyncTask,
                     trimTranslogTask,
                     globalCheckpointTask,
-                    retentionLeaseSyncTask
+                    retentionLeaseSyncTask,
+                    segmentStatsTask
                 );
                 l.onResponse(null);
             }))) {
@@ -1314,6 +1331,15 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
         Property.IndexScope
     );
 
+    // this setting is intentionally not registered, it is only used in tests/debugging
+    public static final Setting<TimeValue> SEGMENT_STATS_LOGGING_INTERVAL_SETTING = Setting.timeSetting(
+        "index.segment_stats.logging_interval",
+        TimeValue.MINUS_ONE,
+        TimeValue.MINUS_ONE,
+        Property.Dynamic,
+        Property.IndexScope
+    );
+
     /**
      * Background task that syncs the global checkpoint to replicas.
      */
@@ -1361,6 +1387,152 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
 
     }
 
+    @Nullable
+    private AsyncSegmentStatsTask createSegmentStatsTaskIfEnabled() {
+        TimeValue interval = SEGMENT_STATS_LOGGING_INTERVAL_SETTING.get(indexSettings.getSettings());
+        if (interval.millis() > 0) {
+            return new AsyncSegmentStatsTask(this, interval);
+        }
+        return null;
+    }
+
+    private void maybeLogSegmentStats() {
+        for (IndexShard shard : this.shards.values()) {
+            switch (shard.state()) {
+                case CREATED:
+                case RECOVERING:
+                case POST_RECOVERY:
+                case CLOSED:
+                    continue;
+                case STARTED:
+                    try {
+                        logSegmentStatsForShard(shard);
+                    } catch (AlreadyClosedException ex) {
+                        // fine - continue
+                    } catch (Exception e) {
+                        logger.warn(() -> "[" + shard.shardId() + "] failed to log segment stats", e);
+                    }
+                    continue;
+                default:
+                    throw new IllegalStateException("unknown state: " + shard.state());
+            }
+        }
+    }
+
+    private void logSegmentStatsForShard(IndexShard shard) {
+        try (Engine.Searcher searcher = shard.acquireSearcher("segment_stats")) {
+            IndexReader reader = searcher.getIndexReader();
+
+            for (LeafReaderContext leafContext : reader.leaves()) {
+                var leafReader = leafContext.reader();
+
+                String segmentName = "";
+                int numDocs = leafReader.numDocs();
+                int maxDoc = leafReader.maxDoc();
+
+                long minTimestamp = 0;
+                long maxTimestamp = 0;
+                long timestampCount = 0;
+
+                long tsidCount = 0;
+
+                long bloomFilterHits = 0;
+                long bloomFilterMisses = 0;
+                long bloomFilterFalsePositives = 0;
+                long bloomFilterSizeInBits = 0;
+                long bloomFilterBitsSet = 0;
+
+                SegmentReader segmentReader = Lucene.tryUnwrapSegmentReader(leafReader);
+                if (segmentReader != null) {
+                    segmentName = segmentReader.getSegmentName();
+
+                    FieldsProducer postingsReader = segmentReader.getPostingsReader();
+                    if (postingsReader instanceof DelegatingBloomFilterFieldsProducer bloomFilterProducer) {
+                        bloomFilterHits = bloomFilterProducer.getHits();
+                        bloomFilterMisses = bloomFilterProducer.getMisses();
+                        bloomFilterFalsePositives = bloomFilterProducer.getFalsePositives();
+                        bloomFilterSizeInBits = bloomFilterProducer.getBloomFilterSizeInBits();
+                        bloomFilterBitsSet = bloomFilterProducer.getBloomFilterBitsSet();
+                    }
+                }
+
+                FieldInfo timestampInfo = leafReader.getFieldInfos().fieldInfo(DataStream.TIMESTAMP_FIELD_NAME);
+                if (timestampInfo != null) {
+                    if (timestampInfo.docValuesSkipIndexType() == DocValuesSkipIndexType.RANGE) {
+                        DocValuesSkipper skipper = leafReader.getDocValuesSkipper(DataStream.TIMESTAMP_FIELD_NAME);
+                        if (skipper != null) {
+                            minTimestamp = skipper.minValue();
+                            maxTimestamp = skipper.maxValue();
+                            timestampCount = skipper.docCount();
+                        }
+                    } else {
+                        PointValues tsPointValues = leafReader.getPointValues(DataStream.TIMESTAMP_FIELD_NAME);
+                        if (tsPointValues != null) {
+                            minTimestamp = LongPoint.decodeDimension(tsPointValues.getMinPackedValue(), 0);
+                            maxTimestamp = LongPoint.decodeDimension(tsPointValues.getMaxPackedValue(), 0);
+                            timestampCount = tsPointValues.size();
+                        }
+                    }
+                }
+
+                SortedDocValues tsidDocValues = leafReader.getSortedDocValues(TimeSeriesIdFieldMapper.NAME);
+                if (tsidDocValues != null) {
+                    tsidCount = tsidDocValues.getValueCount();
+                }
+
+                // Format: shard segment num_docs max_doc ts_min ts_max ts_count tsid_count bf_hits bf_misses bf_fp bf_size bf_set
+                // bf_saturation
+                double bloomFilterSaturation = bloomFilterSizeInBits > 0 ? (double) bloomFilterBitsSet / bloomFilterSizeInBits : 0.0;
+                logger.info(
+                    "SEGMENT_STATS\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                    shard.shardId(),
+                    segmentName,
+                    numDocs,
+                    maxDoc,
+                    minTimestamp,
+                    maxTimestamp,
+                    timestampCount,
+                    tsidCount,
+                    bloomFilterHits,
+                    bloomFilterMisses,
+                    bloomFilterFalsePositives,
+                    bloomFilterSizeInBits,
+                    bloomFilterBitsSet,
+                    String.format(java.util.Locale.ROOT, "%.6f", bloomFilterSaturation)
+                );
+            }
+        } catch (IOException e) {
+            logger.warn(() -> "[" + shard.shardId() + "] failed to read segment stats", e);
+        }
+    }
+
+    static final class AsyncSegmentStatsTask extends BaseAsyncTask {
+
+        private final AtomicBoolean running = new AtomicBoolean(false);
+
+        AsyncSegmentStatsTask(final IndexService indexService, TimeValue interval) {
+            super(indexService, indexService.threadPool.generic(), interval);
+        }
+
+        @Override
+        protected void runInternal() {
+            if (running.compareAndSet(false, true) == false) {
+                indexService.logger.debug("segment_stats task already running, skipping");
+                return;
+            }
+            try {
+                indexService.maybeLogSegmentStats();
+            } finally {
+                running.set(false);
+            }
+        }
+
+        @Override
+        public String toString() {
+            return "segment_stats";
+        }
+    }
+
     AsyncRefreshTask getRefreshTask() { // for tests
         return refreshTask;
     }
@@ -1371,6 +1543,10 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
 
     AsyncTrimTranslogTask getTrimTranslogTask() { // for tests
         return trimTranslogTask;
+    }
+
+    AsyncSegmentStatsTask getSegmentStatsTask() { // for tests
+        return segmentStatsTask;
     }
 
     /**

@@ -32,6 +32,16 @@ public interface BloomFilter extends Closeable {
         public long sizeInBytes() {
             return 0;
         }
+
+        @Override
+        public long sizeInBits() {
+            return 0;
+        }
+
+        @Override
+        public long getBitsSet() {
+            return 0;
+        }
     };
 
     /**
@@ -47,6 +57,17 @@ public interface BloomFilter extends Closeable {
      * Returns the size in bytes of the bloom filter data on disk.
      */
     long sizeInBytes();
+
+    /**
+     * Returns the size in bits of the bloom filter.
+     */
+    long sizeInBits();
+
+    /**
+     * Returns the number of bits set to 1 in the bloom filter (population count).
+     * This can be used to calculate saturation: getBitsSet() / sizeInBits()
+     */
+    long getBitsSet() throws IOException;
 
     static BloomFilter getBloomFilterForId(SegmentReadState state) throws IOException {
         var codec = state.segmentInfo.getCodec();
@@ -68,6 +89,16 @@ public interface BloomFilter extends Closeable {
                     @Override
                     public long sizeInBytes() {
                         return bloomFilter.sizeInBytes();
+                    }
+
+                    @Override
+                    public long sizeInBits() {
+                        return bloomFilter.sizeInBits();
+                    }
+
+                    @Override
+                    public long getBitsSet() throws IOException {
+                        return bloomFilter.getBitsSet();
                     }
 
                     @Override

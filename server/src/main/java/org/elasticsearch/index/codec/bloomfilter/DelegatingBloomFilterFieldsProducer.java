@@ -20,6 +20,7 @@ import org.elasticsearch.index.mapper.IdFieldMapper;
 import java.io.IOException;
 import java.util.Iterator;
 import java.util.Set;
+import java.util.concurrent.atomic.LongAdder;
 
 /**
  * A FieldsProducer that uses a Bloom filter for fast term existence checks before
@@ -31,9 +32,33 @@ public class DelegatingBloomFilterFieldsProducer extends FieldsProducer {
     private final FieldsProducer delegate;
     private final BloomFilter bloomFilter;
 
+    private final LongAdder hits = new LongAdder();
+    private final LongAdder misses = new LongAdder();
+    private final LongAdder falsePositives = new LongAdder();
+
     public DelegatingBloomFilterFieldsProducer(FieldsProducer delegate, BloomFilter bloomFilter) {
         this.delegate = delegate;
         this.bloomFilter = bloomFilter;
+    }
+
+    public long getHits() {
+        return hits.sum();
+    }
+
+    public long getMisses() {
+        return misses.sum();
+    }
+
+    public long getFalsePositives() {
+        return falsePositives.sum();
+    }
+
+    public long getBloomFilterSizeInBits() {
+        return bloomFilter.sizeInBits();
+    }
+
+    public long getBloomFilterBitsSet() throws IOException {
+        return bloomFilter.getBitsSet();
     }
 
     @Override
@@ -72,9 +97,16 @@ public class DelegatingBloomFilterFieldsProducer extends FieldsProducer {
                     @Override
                     public boolean seekExact(BytesRef text) throws IOException {
                         if (bloomFilter.mayContainValue(field, text) == false) {
+                            misses.increment();
                             return false;
                         }
-                        return getDelegate().seekExact(text);
+                        boolean found = getDelegate().seekExact(text);
+                        if (found) {
+                            hits.increment();
+                        } else {
+                            falsePositives.increment();
+                        }
+                        return found;
                     }
                 };
             }
