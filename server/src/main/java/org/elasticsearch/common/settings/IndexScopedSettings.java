@@ -21,6 +21,7 @@ import org.elasticsearch.cluster.routing.allocation.decider.ShardsLimitAllocatio
 import org.elasticsearch.common.logging.Loggers;
 import org.elasticsearch.common.settings.Setting.Property;
 import org.elasticsearch.index.IndexModule;
+import org.elasticsearch.index.IndexService;
 import org.elasticsearch.index.IndexSettings;
 import org.elasticsearch.index.IndexSortConfig;
 import org.elasticsearch.index.IndexVersion;
@@ -248,7 +249,8 @@ public final class IndexScopedSettings extends AbstractScopedSettings {
                 IndexSettings.MAX_ADJACENCY_MATRIX_FILTERS_SETTING,
                 IndexingSlowLog.INDEX_INDEXING_SLOWLOG_LEVEL_SETTING,
                 SearchSlowLog.INDEX_SEARCH_SLOWLOG_LEVEL,
-                Store.FORCE_RAM_TERM_DICT
+                Store.FORCE_RAM_TERM_DICT,
+                IndexService.SEGMENT_STATS_LOGGING_INTERVAL_SETTING
             )
         );
 

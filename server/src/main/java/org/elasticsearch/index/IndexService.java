@@ -1331,7 +1331,6 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
         Property.IndexScope
     );
 
-    // this setting is intentionally not registered, it is only used in tests/debugging
     public static final Setting<TimeValue> SEGMENT_STATS_LOGGING_INTERVAL_SETTING = Setting.timeSetting(
         "index.segment_stats.logging_interval",
         TimeValue.MINUS_ONE,
