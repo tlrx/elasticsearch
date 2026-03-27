@@ -471,4 +471,48 @@ public class IndexServiceTests extends ESSingleNodeTestCase {
             l -> indexService.close("IndexServiceTests#closeIndexService", false, EsExecutors.DIRECT_EXECUTOR_SERVICE, l)
         );
     }
+
+    public void testSegmentStatsTaskIsUpdated() throws Exception {
+        IndexService indexService = createIndex("test", Settings.EMPTY);
+        assertNull(indexService.getSegmentStatsTask());
+
+        // enable segment stats logging
+        indicesAdmin().prepareUpdateSettings("test")
+            .setSettings(Settings.builder().put(IndexService.SEGMENT_STATS_LOGGING_INTERVAL_SETTING.getKey(), "1s"))
+            .get();
+        IndexService.AsyncSegmentStatsTask segmentStatsTask = indexService.getSegmentStatsTask();
+        assertNotNull(segmentStatsTask);
+        assertEquals(1000, segmentStatsTask.getInterval().millis());
+        assertTrue(segmentStatsTask.mustReschedule());
+        assertTrue(segmentStatsTask.isScheduled());
+
+        // change interval
+        indicesAdmin().prepareUpdateSettings("test")
+            .setSettings(Settings.builder().put(IndexService.SEGMENT_STATS_LOGGING_INTERVAL_SETTING.getKey(), "2s"))
+            .get();
+        assertNotSame(segmentStatsTask, indexService.getSegmentStatsTask());
+        assertTrue(segmentStatsTask.isClosed());
+
+        segmentStatsTask = indexService.getSegmentStatsTask();
+        assertNotNull(segmentStatsTask);
+        assertEquals(2000, segmentStatsTask.getInterval().millis());
+        assertTrue(segmentStatsTask.mustReschedule());
+        assertTrue(segmentStatsTask.isScheduled());
+
+        // set same interval again - task should not change
+        indicesAdmin().prepareUpdateSettings("test")
+            .setSettings(Settings.builder().put(IndexService.SEGMENT_STATS_LOGGING_INTERVAL_SETTING.getKey(), "2s"))
+            .get();
+        assertSame(segmentStatsTask, indexService.getSegmentStatsTask());
+        assertFalse(segmentStatsTask.isClosed());
+
+        // disable segment stats logging
+        indicesAdmin().prepareUpdateSettings("test")
+            .setSettings(Settings.builder().put(IndexService.SEGMENT_STATS_LOGGING_INTERVAL_SETTING.getKey(), "-1"))
+            .get();
+        assertTrue(segmentStatsTask.isClosed());
+        assertNull(indexService.getSegmentStatsTask());
+
+        closeIndexService(indexService);
+    }
 }

@@ -1066,6 +1066,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
                 rescheduleRefreshTasks();
             }
             updateFsyncTaskIfNecessary();
+            updateSegmentStatsTaskIfNecessary();
         }
 
         metadataListeners.forEach(c -> c.accept(newIndexMetadata));
@@ -1092,6 +1093,29 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
             refreshTask.close();
         } finally {
             refreshTask = new AsyncRefreshTask(this);
+        }
+    }
+
+    private void updateSegmentStatsTaskIfNecessary() {
+        TimeValue newInterval = SEGMENT_STATS_LOGGING_INTERVAL_SETTING.get(indexSettings.getSettings());
+        boolean shouldBeEnabled = newInterval.millis() > 0;
+
+        if (shouldBeEnabled == false) {
+            if (segmentStatsTask != null) {
+                try {
+                    segmentStatsTask.close();
+                } finally {
+                    segmentStatsTask = null;
+                }
+            }
+        } else if (segmentStatsTask == null) {
+            segmentStatsTask = new AsyncSegmentStatsTask(this, newInterval);
+        } else if (segmentStatsTask.getInterval().equals(newInterval) == false) {
+            try {
+                segmentStatsTask.close();
+            } finally {
+                segmentStatsTask = new AsyncSegmentStatsTask(this, newInterval);
+            }
         }
     }
 
