@@ -1443,7 +1443,7 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
     }
 
     private void logSegmentStatsForShard(IndexShard shard) {
-        try (Engine.Searcher searcher = shard.acquireSearcher("segment_stats")) {
+        try (Engine.Searcher searcher = shard.acquireInternalSearcher("segment_stats")) {
             IndexReader reader = searcher.getIndexReader();
 
             for (LeafReaderContext leafContext : reader.leaves()) {
@@ -1503,17 +1503,21 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
                     tsidCount = tsidDocValues.getValueCount();
                 }
 
-                // Format: shard segment num_docs max_doc ts_min ts_max ts_count tsid_count bf_hits bf_misses bf_fp bf_size bf_set
-                // bf_saturation
+                // Format: shard segment num_docs max_doc ts_min ts_max ts_range_ms ts_range ts_count tsid_count bf_hits bf_misses
+                // bf_fp bf_size bf_set bf_saturation
                 double bloomFilterSaturation = bloomFilterSizeInBits > 0 ? (double) bloomFilterBitsSet / bloomFilterSizeInBits : 0.0;
+                long timestampRangeMs = maxTimestamp - minTimestamp;
+                TimeValue timestampRange = TimeValue.timeValueMillis(timestampRangeMs);
                 logger.info(
-                    "SEGMENT_STATS\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                    "SEGMENT_STATS\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                     shard.shardId(),
                     segmentName,
                     numDocs,
                     maxDoc,
                     minTimestamp,
                     maxTimestamp,
+                    timestampRangeMs,
+                    timestampRange,
                     timestampCount,
                     tsidCount,
                     bloomFilterHits,

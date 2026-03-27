@@ -1756,6 +1756,16 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         return engine.acquireSearcher(source, Engine.SearcherScope.EXTERNAL, this::wrapSearcher);
     }
 
+    /**
+     * Acquires an internal searcher that bypasses security wrappers. This should only be used for
+     * internal operations that read index metadata (like segment stats) and don't expose document content.
+     */
+    public Engine.Searcher acquireInternalSearcher(String source) {
+        readAllowed();
+        final Engine engine = getEngine();
+        return engine.acquireSearcher(source, Engine.SearcherScope.INTERNAL);
+    }
+
     private void markSearcherAccessed() {
         lastSearcherAccess.lazySet(threadPool.relativeTimeInMillis());
     }
