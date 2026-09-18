@@ -84,6 +84,7 @@ import static org.elasticsearch.blobcache.shared.SharedBlobCacheService.UNKNOWN_
 import static org.elasticsearch.test.MockLog.assertThatLogger;
 import static org.elasticsearch.xpack.stateless.commits.BlobLocationTestUtils.createBlobLocation;
 import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.instanceOf;
@@ -649,6 +650,90 @@ public class SearchDirectoryTests extends ESTestCase {
                 "unknown file returns UNKNOWN_TIMESTAMP",
                 searchDirectory.getTimestampMillis("unknown-file"),
                 equalTo(UNKNOWN_TIMESTAMP)
+            );
+        }
+    }
+
+    /**
+     * A relocated PIT commit accumulates generational files across multiple batched compound commits (BCCs) over the PIT's lifetime, so
+     * the metadata handed to {@link SearchDirectory#mergePITReaderMetadata} can reference several distinct BCC term/generations. Opening
+     * the relocated commit re-opens those generational files and each open must be able to acquire its BCC term/generation. This test
+     * verifies that merging such metadata pins <em>every</em> referenced BCC (not just one), so that {@code openInput} on any of the
+     * generational files does not fail with "Cannot acquire ... for generational file".
+     */
+    public void testMergePITReaderMetadataPinsAllGenerationalBccTermAndGens() throws IOException {
+        var regionSize = ByteSizeValue.ofBytes(4096);
+        var cacheSize = ByteSizeValue.ofBytes(regionSize.getBytes() * 100L);
+        try (var node = createFakeStatelessNode(regionSize, cacheSize)) {
+            final var searchDirectory = SearchDirectory.unwrapDirectory(node.searchStore.directory());
+
+            // Two generational files that live in two different BCCs (gen 1 and gen 2), plus a regular file in a third (gen 3).
+            final var genFileBcc1 = "_0_1.liv";
+            final var genFileBcc2 = "_1_1.liv";
+            final var regularFile = "file_A";
+            final var metadata = Map.of(
+                regularFile,
+                new BlobFileRanges(createBlobLocation(1L, 3L, 0L, 100L), null),
+                genFileBcc1,
+                new BlobFileRanges(createBlobLocation(1L, 1L, 100L, 100L), null),
+                genFileBcc2,
+                new BlobFileRanges(createBlobLocation(1L, 2L, 100L, 100L), null)
+            );
+
+            searchDirectory.mergePITReaderMetadata(metadata);
+
+            assertThat(
+                "both BCC term/generations referenced by the relocated PIT's generational files must be pinned",
+                searchDirectory.getAcquiredGenerationalFileTermAndGenerations(),
+                containsInAnyOrder(new PrimaryTermAndGeneration(1L, 1L), new PrimaryTermAndGeneration(1L, 2L))
+            );
+        }
+    }
+
+    /**
+     * Commit-notification (refresh) counterpart of {@link #testMergePITReaderMetadataPinsAllGenerationalBccTermAndGens}. A commit's live
+     * file set is cumulative and can list generational files that live in several batched compound commits (BCCs). This is the metadata
+     * handed to {@link SearchDirectory#updateCommit} on a commit notification, right before the search engine refreshes and re-opens the
+     * reader (SearchEngine.refreshIfNeeded -> openInput). Every referenced BCC must therefore be pinned, otherwise the refresh open fails
+     * with "Cannot acquire ... for generational file".
+     */
+    public void testUpdateCommitPinsAllGenerationalBccTermAndGens() throws IOException {
+        var regionSize = ByteSizeValue.ofBytes(4096);
+        var cacheSize = ByteSizeValue.ofBytes(regionSize.getBytes() * 100L);
+        try (var node = createFakeStatelessNode(regionSize, cacheSize)) {
+            final var searchDirectory = SearchDirectory.unwrapDirectory(node.searchStore.directory());
+
+            // A commit whose live files include a regular file plus two generational files living in two different BCCs (gen 1 and gen 2).
+            final var genFileBcc1 = "_0_1.liv";
+            final var genFileBcc2 = "_1_1.liv";
+            final var regularFile = "file_A";
+            searchDirectory.updateCommit(
+                new StatelessCompoundCommit(
+                    searchDirectory.shardId,
+                    new PrimaryTermAndGeneration(1L, 3L),
+                    1L,
+                    "_na_",
+                    Map.of(
+                        regularFile,
+                        createBlobLocation(1L, 3L, 0L, 100L),
+                        genFileBcc1,
+                        createBlobLocation(1L, 1L, 100L, 100L),
+                        genFileBcc2,
+                        createBlobLocation(1L, 2L, 100L, 100L)
+                    ),
+                    300L,
+                    Set.of(regularFile, genFileBcc1, genFileBcc2),
+                    0L,
+                    InternalFilesReplicatedRanges.EMPTY,
+                    Map.of(),
+                    null
+                )
+            );
+
+            assertThat(
+                "every BCC term/generation referenced by the commit's generational files must be pinned",
+                searchDirectory.getAcquiredGenerationalFileTermAndGenerations(),
+                containsInAnyOrder(new PrimaryTermAndGeneration(1L, 1L), new PrimaryTermAndGeneration(1L, 2L))
             );
         }
     }

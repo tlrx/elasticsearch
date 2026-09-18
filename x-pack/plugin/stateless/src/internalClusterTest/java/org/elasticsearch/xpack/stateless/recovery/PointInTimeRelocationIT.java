@@ -49,6 +49,7 @@ import org.elasticsearch.xpack.stateless.cache.reader.MutableObjectStoreUploadTr
 import org.elasticsearch.xpack.stateless.commits.BatchedCompoundCommit;
 import org.elasticsearch.xpack.stateless.commits.BlobFileRanges;
 import org.elasticsearch.xpack.stateless.commits.StatelessCommitService;
+import org.elasticsearch.xpack.stateless.commits.StatelessCompoundCommit;
 import org.elasticsearch.xpack.stateless.engine.SearchEngine;
 import org.elasticsearch.xpack.stateless.lucene.SearchDirectory;
 import org.elasticsearch.xpack.stateless.objectstore.ObjectStoreService;
@@ -71,6 +72,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.UnaryOperator;
+import java.util.stream.Collectors;
 
 import static org.elasticsearch.index.query.QueryBuilders.boolQuery;
 import static org.elasticsearch.index.query.QueryBuilders.rangeQuery;
@@ -87,7 +90,9 @@ import static org.elasticsearch.xpack.stateless.recovery.TransportStatelessUnpro
 import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.notNullValue;
 import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.hasItem;
+import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.lessThanOrEqualTo;
 import static org.hamcrest.Matchers.not;
@@ -1393,6 +1398,100 @@ public class PointInTimeRelocationIT extends AbstractStatelessPluginIntegTestCas
 
         // Close the PIT with the updated id
         assertClosePit(updatedPitId.get(), 1);
+    }
+
+    /**
+     * Reproduces the production failure {@code IllegalStateException: Cannot acquire [term=..., gen=...] for generational file [...]}
+     * that occurs when a search shard opens a commit whose generational files live in <em>several distinct BCCs</em>.
+     * <p>
+     * With {@link StatelessCommitService#STATELESS_UPLOAD_MAX_AMOUNT_COMMITS}=1 every flush lands in its own BCC blob. Deleting a
+     * document from two different segments in two separate flushes pins each segment's generational (soft-delete) doc-values file to a
+     * distinct BCC, so the resulting commit references generational files across (at least) two BCCs.
+     * <p>
+     * When the search shard opens that commit as a whole — either while applying it (refresh) or, more importantly, when a relocation
+     * target opens it from scratch during recovery — every generational file's BCC term/generation must be acquired at once.
+     * {@code SearchDirectory#mergeMetadata} must therefore pin <em>every</em> referenced BCC; pinning only the first one leaves the
+     * others unacquirable and fails the shard with "failed to refresh segments". The fix is exercised end-to-end here by requiring the
+     * shard to stay healthy and serve the correct doc count both in place and after relocating to a fresh search node.
+     */
+    public void testSearchShardOpensCommitReferencingGenFilesAcrossMultipleBccs() throws Exception {
+        var testNodeSettings = Settings.builder()
+            .put(nodeSettings)
+            // One BCC blob per flush so that each generational file introduced in a separate flush is pinned to a distinct BCC.
+            .put(STATELESS_UPLOAD_MAX_AMOUNT_COMMITS.getKey(), 1)
+            .build();
+        var indexNode = startMasterAndIndexNode(testNodeSettings);
+        var searchNodeA = startSearchNode(testNodeSettings);
+
+        var indexName = randomIdentifier();
+        createIndex(indexName, indexSettings(1, 1).build());
+        ensureGreen(indexName);
+
+        var commitService = internalCluster().getInstance(StatelessCommitService.class, indexNode);
+        var shardId = new ShardId(resolveIndex(indexName), 0);
+
+        // Flush A: first batch of docs -> segment _0, all files internal to BCC_A.
+        int docsInSegment0 = randomIntBetween(50, 80);
+        var bulkResponseA = indexDocs(indexName, docsInSegment0, UnaryOperator.identity(), null, () -> Map.of("field", "a"));
+        List<String> docIdsSegment0 = Arrays.stream(bulkResponseA.getItems()).map(BulkItemResponse::getId).toList();
+        flush(indexName);
+
+        // Flush B: second batch of docs -> segment _1, all files internal to BCC_B.
+        int docsInSegment1 = randomIntBetween(50, 80);
+        var bulkResponseB = indexDocs(indexName, docsInSegment1, UnaryOperator.identity(), null, () -> Map.of("field", "b"));
+        List<String> docIdsSegment1 = Arrays.stream(bulkResponseB.getItems()).map(BulkItemResponse::getId).toList();
+        flush(indexName);
+
+        // Flush C: delete one doc from segment _0. Lucene soft-deletes it via a generational doc-values file for _0, which is first
+        // written into (and therefore pinned to) BCC_C.
+        assertNoFailures(client().prepareBulk().add(client().prepareDelete(indexName, randomFrom(docIdsSegment0))).get());
+        flush(indexName);
+
+        // Flush D: delete one doc from segment _1. Its generational doc-values file for _1 is first written into (and pinned to) BCC_D.
+        // The commit now references generational files pinned to two different BCCs (BCC_C and BCC_D).
+        assertNoFailures(client().prepareBulk().add(client().prepareDelete(indexName, randomFrom(docIdsSegment1))).get());
+        flush(indexName);
+
+        int liveDocs = docsInSegment0 + docsInSegment1 - 2;
+
+        var latestUploadedBcc = commitService.getLatestUploadedBcc(shardId);
+        assertThat(latestUploadedBcc, is(notNullValue()));
+        // Without the fix the search shard fails to apply this commit ("Cannot acquire [...] for generational file [...]") and this
+        // generation listener completes exceptionally instead of ever being notified.
+        awaitUntilSearchNodeGetsCommit(indexName, lastUploadedCompoundCommitGeneration(latestUploadedBcc));
+
+        // Precondition: the commit must reference generational files living in at least two distinct BCCs, otherwise the multi-BCC
+        // pinning path under test would not be exercised.
+        {
+            final var sourceShard = findSearchShard(indexName);
+            final var sourceDirectory = SearchDirectory.unwrapDirectory(sourceShard.store().directory());
+            try (var commitRef = sourceShard.acquireLastIndexCommit(false)) {
+                final var ranges = sourceDirectory.getBlobFileRangesForFiles(commitRef.getIndexCommit().getFileNames());
+                final var genFileBccs = ranges.entrySet()
+                    .stream()
+                    .filter(e -> StatelessCompoundCommit.isGenerationalFile(e.getKey()))
+                    .map(e -> e.getValue().getBatchedCompoundCommitTermAndGeneration())
+                    .collect(Collectors.toSet());
+                assertThat(
+                    "commit must reference generational files across at least two distinct BCCs: " + ranges,
+                    genFileBccs,
+                    hasSize(greaterThanOrEqualTo(2))
+                );
+            }
+        }
+
+        // The search shard must have applied the multi-BCC commit and serve the correct live doc count.
+        ensureGreen(indexName);
+        assertHitCount(prepareSearch(indexName).setSize(0).setTrackTotalHits(true), liveDocs);
+
+        // Relocating to a fresh search node forces the target to open the whole commit from scratch during recovery, acquiring every
+        // referenced BCC at once — the same "open everything" path that fails in production during PIT context transfer.
+        var newSearchNode = startSearchNode(testNodeSettings);
+        updateIndexSettings(Settings.builder().put("index.routing.allocation.exclude._name", searchNodeA), indexName);
+        ensureGreen(indexName);
+        assertThat(internalCluster().nodesInclude(indexName), hasItem(newSearchNode));
+
+        assertHitCount(prepareSearch(indexName).setSize(0).setTrackTotalHits(true), liveDocs);
     }
 
     /**
