@@ -141,6 +141,7 @@ import org.elasticsearch.xpack.esql.plugin.EsqlPlugin;
 import org.elasticsearch.xpack.stateless.AbstractStatelessPluginIntegTestCase;
 import org.elasticsearch.xpack.stateless.StatelessMockRepositoryPlugin;
 import org.elasticsearch.xpack.stateless.StatelessMockRepositoryStrategy;
+import org.elasticsearch.xpack.stateless.TestUtils;
 import org.elasticsearch.xpack.stateless.action.TransportNewCommitNotificationAction;
 import org.elasticsearch.xpack.stateless.cache.DefaultWarmingRatioProviderFactory;
 import org.elasticsearch.xpack.stateless.cache.SearchCommitPrefetcher;
@@ -3853,6 +3854,11 @@ public class StatelessReshardIT extends AbstractStatelessPluginIntegTestCase {
     }
 
     public void testSourceRelocationAndTargetRestart() throws Exception {
+        assumeFalse(
+            "This test lists blob files in the object store: it requires adjustments once merges blobs are enabled",
+            TestUtils.mergeBlobsEnabled()
+        );
+
         Set<String> copiesInProgress = ConcurrentHashMap.newKeySet();
         var blobToBlock = new AtomicReference<String>();
         var blockedFirstCopy = new AtomicBoolean(false);
@@ -3918,6 +3924,7 @@ public class StatelessReshardIT extends AbstractStatelessPluginIntegTestCase {
             .values()
             .stream()
             .map(BlobMetadata::name)
+            .filter(BccBlobFile::startsWithBlobPrefix)
             .max(Comparator.comparingLong(BccBlobFile::parseGenerationFromBlobName))
             .orElseThrow();
         blobToBlock.set(latestBlob);

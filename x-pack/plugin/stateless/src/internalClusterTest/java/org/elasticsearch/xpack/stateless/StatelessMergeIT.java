@@ -417,7 +417,9 @@ public class StatelessMergeIT extends AbstractStatelessPluginIntegTestCase {
             @Override
             protected void doRun() {
                 safeAwait(startBarrier);
-                safeAwait(finishLatch);
+                // The test may take a while before releasing the merge pool (e.g. indexing on a loaded machine): if this times out the
+                // merge threads are freed and the queued merges unexpectedly run
+                safeAwait(finishLatch, TimeValue.timeValueSeconds(60));
             }
 
             @Override

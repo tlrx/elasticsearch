@@ -54,6 +54,7 @@ import org.elasticsearch.transport.TestTransportChannel;
 import org.elasticsearch.transport.TransportSettings;
 import org.elasticsearch.xpack.shutdown.ShutdownPlugin;
 import org.elasticsearch.xpack.stateless.AbstractStatelessPluginIntegTestCase;
+import org.elasticsearch.xpack.stateless.TestUtils;
 import org.elasticsearch.xpack.stateless.cluster.coordination.StatelessClusterConsistencyService;
 import org.elasticsearch.xpack.stateless.commits.BatchedCompoundCommit;
 import org.elasticsearch.xpack.stateless.commits.BccBlobFile;
@@ -402,6 +403,11 @@ public class IndexingShardRecoveryIT extends AbstractStatelessPluginIntegTestCas
     }
 
     public void testRecoverIndexingShardWithStaleCompoundCommit() throws Exception {
+        assumeFalse(
+            "This test lists blob files in the object store: it requires adjustments once merges blobs are enabled",
+            TestUtils.mergeBlobsEnabled()
+        );
+
         final var masterNode = startMasterOnlyNode();
         final var extraSettings = Settings.builder()
             .put(StatelessClusterConsistencyService.DELAYED_CLUSTER_CONSISTENCY_INTERVAL_SETTING.getKey(), "100ms")
