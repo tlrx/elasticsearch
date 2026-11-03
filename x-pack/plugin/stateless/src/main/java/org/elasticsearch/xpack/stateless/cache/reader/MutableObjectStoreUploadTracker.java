@@ -60,4 +60,21 @@ public interface MutableObjectStoreUploadTracker extends ObjectStoreUploadTracke
      * The implementation should ignore the arguments if the latest information is already more recent.
      */
     void updateLatestCommitInfo(PrimaryTermAndGeneration ccTermAndGen, String nodeId);
+
+    /**
+     * Records that a commit notification announced the given {@link BatchedCompoundCommit} as uploaded. This must be called when the
+     * notification is received, before its prefetch starts, whereas {@link #updateLatestUploadedBcc} is only called once the prefetch is
+     * done. It allows to tell apart a read failing because the prefetch is late from one failing because nothing announced the upload.
+     * The implementation should ignore the argument if it is null or if the latest information is already more recent.
+     */
+    default void updateLatestNotifiedBcc(PrimaryTermAndGeneration notifiedUploadedBccTermAndGen) {}
+
+    /**
+     * Called when a read of the given {@link BatchedCompoundCommit} from its VBCC failed because the VBCC was released. The implementation
+     * records why the read was still targeting the VBCC and then updates the latest uploaded information like
+     * {@link #updateLatestUploadedBcc} so that next reads go to the object store.
+     */
+    default void onVbccNotFound(PrimaryTermAndGeneration bccTermAndGen) {
+        updateLatestUploadedBcc(bccTermAndGen);
+    }
 }

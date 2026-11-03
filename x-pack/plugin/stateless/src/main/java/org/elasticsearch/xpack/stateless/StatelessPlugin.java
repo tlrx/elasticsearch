@@ -166,6 +166,7 @@ import org.elasticsearch.xpack.stateless.cache.reader.AtomicMutableObjectStoreUp
 import org.elasticsearch.xpack.stateless.cache.reader.CacheBlobReaderService;
 import org.elasticsearch.xpack.stateless.cache.reader.FillCacheMemoryPressure;
 import org.elasticsearch.xpack.stateless.cache.reader.MutableObjectStoreUploadTracker;
+import org.elasticsearch.xpack.stateless.cache.reader.UploadTrackerMetrics;
 import org.elasticsearch.xpack.stateless.cluster.coordination.StatelessClusterConsistencyService;
 import org.elasticsearch.xpack.stateless.cluster.coordination.StatelessClusterStateCleanupService;
 import org.elasticsearch.xpack.stateless.cluster.coordination.StatelessElectionStrategy;
@@ -526,6 +527,7 @@ public class StatelessPlugin extends Plugin
     private final SetOnce<HollowShardsMetrics> hollowShardMetrics = new SetOnce<>();
     private final SetOnce<StatelessReaderHeapMetrics> readerHeapMetrics = new SetOnce<>();
     private final SetOnce<SearchCommitPrefetcherMetrics> prefetcherMetrics = new SetOnce<>();
+    private final SetOnce<UploadTrackerMetrics> uploadTrackerMetrics = new SetOnce<>();
     private final SetOnce<StatelessElectionStrategy> electionStrategy = new SetOnce<>();
     private final SetOnce<StoreHeartbeatService> storeHeartbeatService = new SetOnce<>();
     // protected for testing
@@ -1145,6 +1147,10 @@ public class StatelessPlugin extends Plugin
             // created whenever we create the search engine and it might miss the settings that were updated before the node was started.
             // also note that we create one search engine per index so we could end up with many instances of settings listeners.
             setAndGet(this.prefetchingDynamicSettings, new SearchCommitPrefetcherDynamicSettings(clusterService.getClusterSettings()));
+            setAndGet(
+                this.uploadTrackerMetrics,
+                UploadTrackerMetrics.register(meterRegistry, prefetchingDynamicSettings.get()::prefetchMetricsEnabled)
+            );
             setAndGet(this.reshardSearchFilters, new ReshardSearchFilters(settings));
             SearchShardInformationMetricsCollector shardInformationMetricsCollector = new SearchShardInformationMetricsCollector(
                 services.telemetryProvider()
@@ -1667,7 +1673,7 @@ public class StatelessPlugin extends Plugin
                     return createSearchDirectory(
                         sharedBlobCacheService.get(),
                         cacheBlobReaderService.get(),
-                        new AtomicMutableObjectStoreUploadTracker(),
+                        new AtomicMutableObjectStoreUploadTracker(uploadTrackerMetrics.get()),
                         shardRouting.shardId(),
                         searchIdxVersion
                     );

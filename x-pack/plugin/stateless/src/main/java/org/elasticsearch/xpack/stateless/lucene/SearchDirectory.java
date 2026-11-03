@@ -212,6 +212,10 @@ public class SearchDirectory extends BlobStoreCacheDirectory {
         objectStoreUploadTracker.updateLatestUploadedBcc(latestUploadedBccTermAndGen);
     }
 
+    public void updateLatestNotifiedBcc(PrimaryTermAndGeneration notifiedUploadedBccTermAndGen) {
+        objectStoreUploadTracker.updateLatestNotifiedBcc(notifiedUploadedBccTermAndGen);
+    }
+
     public void updateLatestCommitInfo(PrimaryTermAndGeneration ccTermAndGen, String nodeId) {
         objectStoreUploadTracker.updateLatestCommitInfo(ccTermAndGen, nodeId);
     }

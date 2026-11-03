@@ -7,6 +7,7 @@
 
 package org.elasticsearch.xpack.stateless.cache.reader;
 
+import org.elasticsearch.xpack.stateless.cache.reader.UploadTrackerMetrics.VbccNotFoundCause;
 import org.elasticsearch.xpack.stateless.engine.PrimaryTermAndGeneration;
 
 import java.util.concurrent.atomic.AtomicReference;
@@ -19,12 +20,23 @@ public class AtomicMutableObjectStoreUploadTracker implements MutableObjectStore
     // Null means no commit has been uploaded yet.
     private final AtomicReference<PrimaryTermAndGeneration> latestUploaded = new AtomicReference<>(null);
 
+    // Latest commit announced as uploaded by a commit notification, whose prefetch may not be completed yet (null means none so far).
+    private final AtomicReference<PrimaryTermAndGeneration> latestNotifiedUploaded = new AtomicReference<>(null);
+
     // Keep the latest non uploaded commit that has been notified (null means no commit has been notified yet)
     private record LatestCommitInfo(PrimaryTermAndGeneration ccTermAndGen, String nodeId) {}
 
     private final AtomicReference<LatestCommitInfo> latestCommitInfo = new AtomicReference<>(null);
 
-    public AtomicMutableObjectStoreUploadTracker() {}
+    private final UploadTrackerMetrics metrics;
+
+    public AtomicMutableObjectStoreUploadTracker() {
+        this(UploadTrackerMetrics.NOOP);
+    }
+
+    public AtomicMutableObjectStoreUploadTracker(UploadTrackerMetrics metrics) {
+        this.metrics = metrics;
+    }
 
     /**
      * Updates the last uploaded term and generation if the provided term and generation is greater than the current one.
@@ -37,6 +49,41 @@ public class AtomicMutableObjectStoreUploadTracker implements MutableObjectStore
             }
             return current;
         });
+    }
+
+    /**
+     * Updates the latest notified uploaded term and generation if the provided term and generation is greater than the current one.
+     */
+    @Override
+    public void updateLatestNotifiedBcc(PrimaryTermAndGeneration notifiedUploadedBccTermAndGen) {
+        if (notifiedUploadedBccTermAndGen == null) {
+            return;
+        }
+        latestNotifiedUploaded.accumulateAndGet(
+            notifiedUploadedBccTermAndGen,
+            (current, candidate) -> current == null || candidate.compareTo(current) > 0 ? candidate : current
+        );
+    }
+
+    /**
+     * Classifies the failed read before updating the tracker, as the update changes the outcome of the classification.
+     */
+    @Override
+    public void onVbccNotFound(PrimaryTermAndGeneration bccTermAndGen) {
+        metrics.recordVbccNotFound(classify(bccTermAndGen));
+        updateLatestUploadedBcc(bccTermAndGen);
+    }
+
+    private VbccNotFoundCause classify(PrimaryTermAndGeneration bccTermAndGen) {
+        var uploaded = latestUploaded.get();
+        if (uploaded != null && bccTermAndGen.compareTo(uploaded) <= 0) {
+            return VbccNotFoundCause.ALREADY_UPDATED;
+        }
+        var notified = latestNotifiedUploaded.get();
+        if (notified != null && bccTermAndGen.compareTo(notified) <= 0) {
+            return VbccNotFoundCause.PREFETCH_PENDING;
+        }
+        return VbccNotFoundCause.NOTIFICATION_PENDING;
     }
 
     /**

@@ -609,6 +609,8 @@ public class SearchEngine extends Engine {
         );
         var ccTermAndGen = notification.compoundCommit().primaryTermAndGeneration();
         searchDirectory.updateLatestCommitInfo(ccTermAndGen, notification.nodeId());
+        // Record the announced upload before the prefetch starts, the tracker itself is only updated once the prefetch is done.
+        searchDirectory.updateLatestNotifiedBcc(notification.latestUploadedBatchedCompoundCommitTermAndGen());
 
         SubscribableListener
             // Dispatch the pre-fetching if enabled right away and if there are multiple concurrent

@@ -75,7 +75,7 @@ public class SwitchingCacheBlobReader implements CacheBlobReader {
                     logger.debug(() -> message, ex);
 
                     // Update the tracker so that next attempts will not try to read from the VBCC, but from the uploaded BCC.
-                    tracker.updateLatestUploadedBcc(locationPrimaryTermAndGeneration);
+                    tracker.onVbccNotFound(locationPrimaryTermAndGeneration);
 
                     // Throw an exception to indicate that the VBCC was uploaded and the read should be attempted again so that it
                     // reaches out to the BCC on the object store. Note that multiple concurrent reads may fail at this point, but they
