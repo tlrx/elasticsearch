@@ -30,7 +30,7 @@ import java.util.function.BooleanSupplier;
 /// started inside it:
 ///
 /// - [#WINDOW_DURATION_HISTOGRAM_METRIC]: from the notification to the end of the prefetch.
-/// - [#NOT_FOUND_TO_PREFETCH_DONE_HISTOGRAM_METRIC]: from the first failed read to the end of the prefetch, only if a read failed.
+/// - [#FIRST_NOT_FOUND_TO_END_HISTOGRAM_METRIC]: from the first failed read to the end of the prefetch, only if a read failed.
 /// - [#READS_OK_HISTOGRAM_METRIC], [#READS_NOT_FOUND_HISTOGRAM_METRIC], [#BYTES_OK_HISTOGRAM_METRIC] and
 ///   [#BYTES_NOT_FOUND_HISTOGRAM_METRIC]: the reads and requested bytes by outcome.
 ///
@@ -53,8 +53,7 @@ public record UploadTrackerMetrics(
     public static final String READS_IN_WINDOW_TOTAL_METRIC = "es.stateless.search.vbcc_read_in_window.total";
     public static final String READ_BYTES_IN_WINDOW_TOTAL_METRIC = "es.stateless.search.vbcc_read_in_window.bytes.total";
     public static final String WINDOW_DURATION_HISTOGRAM_METRIC = "es.stateless.search.vbcc_window.duration.histogram";
-    public static final String NOT_FOUND_TO_PREFETCH_DONE_HISTOGRAM_METRIC =
-        "es.stateless.search.vbcc_not_found_to_prefetch_done.histogram";
+    public static final String FIRST_NOT_FOUND_TO_END_HISTOGRAM_METRIC = "es.stateless.search.vbcc_window.first_not_found_to_end.histogram";
     public static final String READS_OK_HISTOGRAM_METRIC = "es.stateless.search.vbcc_window.reads_ok.histogram";
     public static final String READS_NOT_FOUND_HISTOGRAM_METRIC = "es.stateless.search.vbcc_window.reads_not_found.histogram";
     public static final String BYTES_OK_HISTOGRAM_METRIC = "es.stateless.search.vbcc_window.bytes_ok.histogram";
@@ -133,7 +132,7 @@ public record UploadTrackerMetrics(
                 "milliseconds"
             ),
             registry.registerLongHistogram(
-                NOT_FOUND_TO_PREFETCH_DONE_HISTOGRAM_METRIC,
+                FIRST_NOT_FOUND_TO_END_HISTOGRAM_METRIC,
                 "Time between the first read of a window that failed and the end of the prefetch",
                 "milliseconds"
             ),

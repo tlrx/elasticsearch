@@ -229,7 +229,7 @@ public class AtomicMutableObjectStoreUploadTrackerTests extends ESTestCase {
         inFlight.onNotFound();
 
         assertThat(single(UploadTrackerMetrics.WINDOW_DURATION_HISTOGRAM_METRIC), equalTo(300L));
-        assertThat(single(UploadTrackerMetrics.NOT_FOUND_TO_PREFETCH_DONE_HISTOGRAM_METRIC), equalTo(150L));
+        assertThat(single(UploadTrackerMetrics.FIRST_NOT_FOUND_TO_END_HISTOGRAM_METRIC), equalTo(150L));
         assertThat(single(UploadTrackerMetrics.READS_OK_HISTOGRAM_METRIC), equalTo(2L));
         assertThat(single(UploadTrackerMetrics.READS_NOT_FOUND_HISTOGRAM_METRIC), equalTo(1L));
         assertThat(single(UploadTrackerMetrics.BYTES_OK_HISTOGRAM_METRIC), equalTo(68L));
@@ -245,7 +245,7 @@ public class AtomicMutableObjectStoreUploadTrackerTests extends ESTestCase {
         prefetchDone(token, bcc(5));
         clock.set(300L);
         tracker.onVbccNotFound(bcc(5), handle);
-        assertThat(single(UploadTrackerMetrics.NOT_FOUND_TO_PREFETCH_DONE_HISTOGRAM_METRIC), equalTo(0L));
+        assertThat(single(UploadTrackerMetrics.FIRST_NOT_FOUND_TO_END_HISTOGRAM_METRIC), equalTo(0L));
     }
 
     public void testNoNotFoundToPrefetchDoneWhenNoReadFailed() {
@@ -253,7 +253,7 @@ public class AtomicMutableObjectStoreUploadTrackerTests extends ESTestCase {
         tracker.registerVbccRead(bcc(5), 10L).onSuccess();
         prefetchDone(token, bcc(5));
         assertThat(single(UploadTrackerMetrics.READS_OK_HISTOGRAM_METRIC), equalTo(1L));
-        assertThat(histogram(UploadTrackerMetrics.NOT_FOUND_TO_PREFETCH_DONE_HISTOGRAM_METRIC), empty());
+        assertThat(histogram(UploadTrackerMetrics.FIRST_NOT_FOUND_TO_END_HISTOGRAM_METRIC), empty());
     }
 
     public void testNoSummaryWhenNoReadStartedInTheWindow() {
