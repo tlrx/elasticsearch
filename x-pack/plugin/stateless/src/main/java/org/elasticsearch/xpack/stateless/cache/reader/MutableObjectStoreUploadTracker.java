@@ -62,19 +62,41 @@ public interface MutableObjectStoreUploadTracker extends ObjectStoreUploadTracke
     void updateLatestCommitInfo(PrimaryTermAndGeneration ccTermAndGen, String nodeId);
 
     /**
-     * Records that a commit notification announced the given {@link BatchedCompoundCommit} as uploaded. This must be called when the
-     * notification is received, before its prefetch starts, whereas {@link #updateLatestUploadedBcc} is only called once the prefetch is
-     * done. It allows to tell apart a read failing because the prefetch is late from one failing because nothing announced the upload.
-     * The implementation should ignore the argument if it is null or if the latest information is already more recent.
+     * Opens the window between a commit notification announcing the given {@link BatchedCompoundCommit} as uploaded and the end of the
+     * prefetch of that commit, during which the VBCC may already be released by the indexing shard while {@link #updateLatestUploadedBcc}
+     * has not been called yet. This must be called when the notification is received, before its prefetch starts. The returned token must
+     * be closed once the prefetch is done, after {@link #updateLatestUploadedBcc} was called.
+     *
+     * @param latestUploaded the latest uploaded BCC announced by the notification, may be null
+     * @return a token to close when the prefetch is done, never null
      */
-    default void updateLatestNotifiedBcc(PrimaryTermAndGeneration notifiedUploadedBccTermAndGen) {}
+    default VbccEpisodeToken openEpisode(PrimaryTermAndGeneration latestUploaded) {
+        return VbccEpisodeToken.NOOP;
+    }
+
+    /**
+     * Called before a read of the given {@link BatchedCompoundCommit} from its VBCC. If the read starts while a window is open for this
+     * BCC, i.e. a notification announced it (or a later one) as uploaded and the prefetch is not done, the read is registered to the
+     * window until its completion.
+     *
+     * @param bccTermAndGen the BCC targeted by the read
+     * @param bytes         the number of bytes requested by the read
+     * @return a handle to complete when the read is done, never null
+     */
+    default VbccReadHandle registerVbccRead(PrimaryTermAndGeneration bccTermAndGen, long bytes) {
+        return VbccReadHandle.NOOP;
+    }
 
     /**
      * Called when a read of the given {@link BatchedCompoundCommit} from its VBCC failed because the VBCC was released. The implementation
      * records why the read was still targeting the VBCC and then updates the latest uploaded information like
      * {@link #updateLatestUploadedBcc} so that next reads go to the object store.
+     *
+     * @param bccTermAndGen the BCC targeted by the read
+     * @param handle        the handle returned by {@link #registerVbccRead} when the read started
      */
-    default void onVbccNotFound(PrimaryTermAndGeneration bccTermAndGen) {
+    default void onVbccNotFound(PrimaryTermAndGeneration bccTermAndGen, VbccReadHandle handle) {
+        handle.onNotFound();
         updateLatestUploadedBcc(bccTermAndGen);
     }
 }

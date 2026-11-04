@@ -64,28 +64,42 @@ public class SwitchingCacheBlobReader implements CacheBlobReader {
         if (latestUploadInfo.isUploaded()) {
             cacheBlobReaderForUploaded.getRangeInputStream(position, length, listener);
         } else {
-            cacheBlobReaderForNonUploaded.getRangeInputStream(position, length, listener.delegateResponse((l, ex) -> {
-                final var resourceNotFoundException = ExceptionsHelper.unwrap(ex, ResourceNotFoundException.class);
-                if (resourceNotFoundException != null) {
-                    final var message = Strings.format(
-                        "[%s] replied that [%s] is not found",
-                        cacheBlobReaderForNonUploaded,
-                        locationPrimaryTermAndGeneration
-                    );
-                    logger.debug(() -> message, ex);
-
-                    // Update the tracker so that next attempts will not try to read from the VBCC, but from the uploaded BCC.
-                    tracker.onVbccNotFound(locationPrimaryTermAndGeneration);
-
-                    // Throw an exception to indicate that the VBCC was uploaded and the read should be attempted again so that it
-                    // reaches out to the BCC on the object store. Note that multiple concurrent reads may fail at this point, but they
-                    // should be able to retry reading successfully from the object store.
-                    // TODO think about a higher level abstraction that could hide/enforce the exception bubbling and/or the retry (ES-9052)
-                    l.onFailure(new ResourceAlreadyUploadedException(message, ex));
-                } else {
-                    l.onFailure(ex);
+            // Registered when the read starts, not when it fails: a read that starts while the prefetch of a BCC announced as uploaded is
+            // still running belongs to that window, even if it completes after the prefetch.
+            final var handle = tracker.registerVbccRead(locationPrimaryTermAndGeneration, length);
+            cacheBlobReaderForNonUploaded.getRangeInputStream(position, length, new ActionListener<>() {
+                @Override
+                public void onResponse(InputStream inputStream) {
+                    handle.onSuccess();
+                    listener.onResponse(inputStream);
                 }
-            }));
+
+                @Override
+                public void onFailure(Exception ex) {
+                    final var resourceNotFoundException = ExceptionsHelper.unwrap(ex, ResourceNotFoundException.class);
+                    if (resourceNotFoundException != null) {
+                        final var message = Strings.format(
+                            "[%s] replied that [%s] is not found",
+                            cacheBlobReaderForNonUploaded,
+                            locationPrimaryTermAndGeneration
+                        );
+                        logger.debug(() -> message, ex);
+
+                        // Update the tracker so that next attempts will not try to read from the VBCC, but from the uploaded BCC.
+                        tracker.onVbccNotFound(locationPrimaryTermAndGeneration, handle);
+
+                        // Throw an exception to indicate that the VBCC was uploaded and the read should be attempted again so that it
+                        // reaches out to the BCC on the object store. Note that multiple concurrent reads may fail at this point, but
+                        // they should be able to retry reading successfully from the object store.
+                        // TODO think about a higher level abstraction that could hide/enforce the exception bubbling and/or the retry
+                        // (ES-9052)
+                        listener.onFailure(new ResourceAlreadyUploadedException(message, ex));
+                    } else {
+                        handle.onOtherFailure();
+                        listener.onFailure(ex);
+                    }
+                }
+            });
         }
     }
 

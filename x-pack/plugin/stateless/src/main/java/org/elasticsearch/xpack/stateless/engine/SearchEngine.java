@@ -60,6 +60,7 @@ import org.elasticsearch.xpack.stateless.cache.SearchCommitPrefetcher.PrefetchRe
 import org.elasticsearch.xpack.stateless.cache.SearchCommitPrefetcherDynamicSettings;
 import org.elasticsearch.xpack.stateless.cache.SearchCommitPrefetcherMetrics;
 import org.elasticsearch.xpack.stateless.cache.StatelessSharedBlobCacheService;
+import org.elasticsearch.xpack.stateless.cache.reader.VbccEpisodeToken;
 import org.elasticsearch.xpack.stateless.commits.BatchedCompoundCommit;
 import org.elasticsearch.xpack.stateless.commits.BlobFileRanges;
 import org.elasticsearch.xpack.stateless.commits.ClosedShardService;
@@ -609,8 +610,12 @@ public class SearchEngine extends Engine {
         );
         var ccTermAndGen = notification.compoundCommit().primaryTermAndGeneration();
         searchDirectory.updateLatestCommitInfo(ccTermAndGen, notification.nodeId());
-        // Record the announced upload before the prefetch starts, the tracker itself is only updated once the prefetch is done.
-        searchDirectory.updateLatestNotifiedBcc(notification.latestUploadedBatchedCompoundCommitTermAndGen());
+        // Open the window of the announced upload before the prefetch starts: until the prefetch is done the tracker is not updated,
+        // whereas
+        // the indexing shard may already have released the VBCC. Only a foreground prefetch holds the tracker back for a significant time.
+        final VbccEpisodeToken episode = prefetcherDynamicSettings.prefetchingEnabled() && commitPrefetcher.prefetchesInForeground()
+            ? searchDirectory.openEpisode(notification.latestUploadedBatchedCompoundCommitTermAndGen())
+            : VbccEpisodeToken.NOOP;
 
         SubscribableListener
             // Dispatch the pre-fetching if enabled right away and if there are multiple concurrent
@@ -624,6 +629,9 @@ public class SearchEngine extends Engine {
                 // For background prefetch this andThen fires almost immediately (the prefetch is
                 // async), so the window is negligible; for foreground prefetch it closes entirely.
                 searchDirectory.updateLatestUploadedBcc(notification.latestUploadedBatchedCompoundCommitTermAndGen());
+                // Close the window after the tracker was updated, so that a read that starts after the window is closed does not target
+                // the VBCC anymore.
+                episode.closeWindow();
                 if (addOrExecuteSegmentGenerationListener(ccTermAndGen, l.map(g -> null))) {
                     commitNotifications.add(notification);
                     if (pendingCommitNotifications.incrementAndGet() == 1) {
@@ -631,7 +639,8 @@ public class SearchEngine extends Engine {
                     }
                 }
             })
-            .addListener(listener);
+            // Idempotent, covers the paths on which the prefetch listener fails or the notification is not processed.
+            .addListener(ActionListener.runBefore(listener, episode::closeWindow));
     }
 
     private void maybePreFetchLatestCommit(NewCommitNotification newCommitNotification, ActionListener<Void> listener) {

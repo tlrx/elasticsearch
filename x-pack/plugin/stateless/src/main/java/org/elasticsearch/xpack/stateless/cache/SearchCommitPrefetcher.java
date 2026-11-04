@@ -163,6 +163,14 @@ public class SearchCommitPrefetcher {
         this.forcePrefetch = clusterSettings.get(FORCE_PREFETCH_SETTING);
     }
 
+    /**
+     * @return whether a prefetch holds back the refresh (and the update of the upload tracker) until it is done, which is not the case when
+     * the prefetch runs in the background
+     */
+    public boolean prefetchesInForeground() {
+        return prefetchInBackground == false;
+    }
+
     public void maybePrefetchLatestCommit(
         NewCommitNotification notification,
         long timeSinceLastSearcherWasAcquiredInMillis,

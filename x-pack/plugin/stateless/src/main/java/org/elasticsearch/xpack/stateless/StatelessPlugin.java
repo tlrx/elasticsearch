@@ -1673,7 +1673,11 @@ public class StatelessPlugin extends Plugin
                     return createSearchDirectory(
                         sharedBlobCacheService.get(),
                         cacheBlobReaderService.get(),
-                        new AtomicMutableObjectStoreUploadTracker(uploadTrackerMetrics.get()),
+                        new AtomicMutableObjectStoreUploadTracker(
+                            uploadTrackerMetrics.get(),
+                            shardRouting.shardId(),
+                            threadPool.get().relativeTimeInMillisSupplier()
+                        ),
                         shardRouting.shardId(),
                         searchIdxVersion
                     );

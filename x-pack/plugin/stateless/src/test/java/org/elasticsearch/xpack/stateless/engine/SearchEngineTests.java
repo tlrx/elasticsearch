@@ -32,6 +32,7 @@ import org.elasticsearch.index.store.Store;
 import org.elasticsearch.xpack.stateless.action.NewCommitNotificationRequestTests;
 import org.elasticsearch.xpack.stateless.cache.SearchCommitPrefetcherDynamicSettings;
 import org.elasticsearch.xpack.stateless.cache.reader.AtomicMutableObjectStoreUploadTracker;
+import org.elasticsearch.xpack.stateless.cache.reader.VbccEpisodeToken;
 import org.elasticsearch.xpack.stateless.commits.BlobFile;
 import org.elasticsearch.xpack.stateless.commits.BlobFileRanges;
 import org.elasticsearch.xpack.stateless.commits.StatelessCompoundCommit;
@@ -47,6 +48,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -732,6 +734,75 @@ public class SearchEngineTests extends AbstractEngineTestCase {
             assertThat(uploadInfoGenMinusN.isUploaded(), is(true));
             assertThat(uploadInfoGen.isUploaded(), is(true));
             assertThat(uploadInfoGenPlus1.isUploaded(), is(true));
+        }
+    }
+
+    public void testVbccWindowIsOpenedBeforeAndClosedAfterTheTrackerIsUpdated() throws IOException {
+        final var events = new CopyOnWriteArrayList<String>();
+        final var objectStoreUploadTracker = new AtomicMutableObjectStoreUploadTracker() {
+            @Override
+            public void updateLatestUploadedBcc(PrimaryTermAndGeneration latestUploadedBccTermAndGen) {
+                events.add("update");
+                super.updateLatestUploadedBcc(latestUploadedBccTermAndGen);
+            }
+
+            @Override
+            public VbccEpisodeToken openEpisode(PrimaryTermAndGeneration latestUploaded) {
+                events.add("open");
+                final var closed = new AtomicBoolean();
+                return () -> {
+                    if (closed.compareAndSet(false, true)) {
+                        events.add("close");
+                    }
+                };
+            }
+        };
+        final SearchEngine searchEngine = spy(newSearchEngineFromIndexEngine(searchConfig(objectStoreUploadTracker)));
+        // Disable commit notification processing to show the window does not depend on it
+        doReturn(false).when(searchEngine).addOrExecuteSegmentGenerationListener(any(), anyActionListener());
+        try (searchEngine) {
+            final var indexShardRoutingTable = NewCommitNotificationRequestTests.randomIndexShardRoutingTable();
+            final long primaryTerm = randomLongBetween(10, 42);
+            final long ccGen = randomLongBetween(10, 100);
+            final long bccGen = randomLongBetween(5, ccGen);
+            final var latestUploaded = new PrimaryTermAndGeneration(primaryTerm, bccGen - 1);
+            final var compoundCommit = buildCompoundCommit(indexShardRoutingTable.shardId(), primaryTerm, ccGen);
+
+            // the notification is not processed so its listener is not completed, but the prefetch and the tracker update are synchronous
+            searchEngine.onCommitNotification(
+                new NewCommitNotification(compoundCommit, bccGen, latestUploaded, 1L, "_node_id"),
+                new PlainActionFuture<>()
+            );
+
+            // the window is closed once, after the tracker was updated
+            assertThat(events, contains("open", "update", "close"));
+        }
+    }
+
+    public void testNoVbccWindowIsOpenedWhenNoBccIsAnnouncedAsUploaded() throws IOException {
+        final var events = new CopyOnWriteArrayList<String>();
+        final var objectStoreUploadTracker = new AtomicMutableObjectStoreUploadTracker() {
+            @Override
+            public VbccEpisodeToken openEpisode(PrimaryTermAndGeneration latestUploaded) {
+                events.add("open:" + latestUploaded);
+                return VbccEpisodeToken.NOOP;
+            }
+        };
+        final SearchEngine searchEngine = spy(newSearchEngineFromIndexEngine(searchConfig(objectStoreUploadTracker)));
+        doReturn(false).when(searchEngine).addOrExecuteSegmentGenerationListener(any(), anyActionListener());
+        try (searchEngine) {
+            final var indexShardRoutingTable = NewCommitNotificationRequestTests.randomIndexShardRoutingTable();
+            final long primaryTerm = randomLongBetween(10, 42);
+            final long ccGen = randomLongBetween(10, 100);
+            final var compoundCommit = buildCompoundCommit(indexShardRoutingTable.shardId(), primaryTerm, ccGen);
+
+            searchEngine.onCommitNotification(
+                new NewCommitNotification(compoundCommit, ccGen, null, 1L, "_node_id"),
+                new PlainActionFuture<>()
+            );
+
+            // the tracker is asked, and it ignores a null BCC: nothing can be read from the object store
+            assertThat(events, contains("open:null"));
         }
     }
 

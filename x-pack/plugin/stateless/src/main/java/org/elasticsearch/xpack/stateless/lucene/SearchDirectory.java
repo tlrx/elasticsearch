@@ -34,6 +34,7 @@ import org.elasticsearch.xpack.stateless.cache.StatelessSharedBlobCacheService;
 import org.elasticsearch.xpack.stateless.cache.reader.CacheBlobReader;
 import org.elasticsearch.xpack.stateless.cache.reader.CacheBlobReaderService;
 import org.elasticsearch.xpack.stateless.cache.reader.MutableObjectStoreUploadTracker;
+import org.elasticsearch.xpack.stateless.cache.reader.VbccEpisodeToken;
 import org.elasticsearch.xpack.stateless.commits.BlobFile;
 import org.elasticsearch.xpack.stateless.commits.BlobFileRanges;
 import org.elasticsearch.xpack.stateless.commits.BlobLocation;
@@ -212,8 +213,12 @@ public class SearchDirectory extends BlobStoreCacheDirectory {
         objectStoreUploadTracker.updateLatestUploadedBcc(latestUploadedBccTermAndGen);
     }
 
-    public void updateLatestNotifiedBcc(PrimaryTermAndGeneration notifiedUploadedBccTermAndGen) {
-        objectStoreUploadTracker.updateLatestNotifiedBcc(notifiedUploadedBccTermAndGen);
+    /**
+     * Opens the window between the announce of an uploaded BCC by a commit notification and the end of its prefetch, see
+     * {@link MutableObjectStoreUploadTracker#openEpisode}.
+     */
+    public VbccEpisodeToken openEpisode(PrimaryTermAndGeneration latestUploadedBccTermAndGen) {
+        return objectStoreUploadTracker.openEpisode(latestUploadedBccTermAndGen);
     }
 
     public void updateLatestCommitInfo(PrimaryTermAndGeneration ccTermAndGen, String nodeId) {
